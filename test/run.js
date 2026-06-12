@@ -19,8 +19,13 @@ const TOOLS = {
   rustc: process.env.TRANSPILE_RUST || "rustc",
   dotnet: process.env.TRANSPILE_DOTNET || "dotnet",
   lua: process.env.TRANSPILE_LUA || "lua",
+  kotlinc: process.env.TRANSPILE_KOTLINC || (isWin ? "kotlinc.bat" : "kotlinc"),
 };
-const TARGETS = ["js", "python", "c", "go", "java", "csharp", "rust", "lua"];
+const TARGETS = ["js", "python", "c", "go", "java", "csharp", "rust", "lua", "kotlin"];
+
+// kotlinc needs JAVA_HOME; derive it from the java override when it's a path
+const JAVA_HOME = process.env.TRANSPILE_JAVA_HOME ||
+  (path.isAbsolute(TOOLS.java) ? path.dirname(path.dirname(TOOLS.java)) : process.env.JAVA_HOME);
 
 let pass = 0, fail = 0;
 function ok(cond, msg) { if (cond) { pass++; console.log("ok  : " + msg); } else { fail++; console.log("FAIL: " + msg); } }
@@ -72,6 +77,14 @@ function runTarget(target, code, dir, name) {
       fs.writeFileSync(f("lua"), code);
       return cp.execFileSync(TOOLS.lua, [f("lua")], { encoding: "utf8" });
     }
+    case "kotlin": {
+      fs.writeFileSync(f("kt"), code);
+      const jar = path.join(dir, `${name}.jar`);
+      const env = JAVA_HOME ? { ...process.env, JAVA_HOME } : process.env;
+      // .bat scripts need a shell on Windows
+      cp.execFileSync(TOOLS.kotlinc, [f("kt"), "-nowarn", "-include-runtime", "-d", jar], { encoding: "utf8", env, shell: isWin });
+      return cp.execFileSync(TOOLS.java, ["-jar", jar], { encoding: "utf8" });
+    }
     default: throw new Error("unknown target " + target);
   }
 }
@@ -115,7 +128,7 @@ function main() {
       try { ref = norm(runTarget("js", source, dir, name + "_orig")); }
       catch (e) { ok(false, `${ex}: original JS failed: ${(e.stderr || e.message).toString().split("\n")[0]}`); continue; }
 
-      for (const t of ["python", "c", "go", "java", "csharp", "rust", "lua"]) {
+      for (const t of ["python", "c", "go", "java", "csharp", "rust", "lua", "kotlin"]) {
         try {
           const out = norm(runTarget(t, transpile(source, { from: "js", to: t }), dir, name + "_" + t));
           ok(out === ref, `${ex} (JS) -> ${t} matches the original JS`);
@@ -137,7 +150,7 @@ function main() {
       try { ref = norm(runTarget("python", source, dir, name + "_orig")); }
       catch (e) { ok(false, `${ex}: original Python failed: ${(e.stderr || e.message).toString().split("\n")[0]}`); continue; }
 
-      for (const t of ["js", "c", "go", "java", "csharp", "rust", "lua"]) {
+      for (const t of ["js", "c", "go", "java", "csharp", "rust", "lua", "kotlin"]) {
         try {
           const out = norm(runTarget(t, transpile(source, { from: "python", to: t }), dir, name + "_" + t));
           ok(out === ref, `${ex} (Python) -> ${t} matches the original Python`);
@@ -181,7 +194,7 @@ function main() {
       try { ref = norm(runTarget("c", source, dir, name + "_orig")); }
       catch (e) { ok(false, `${ex}: original C failed: ${(e.stderr || e.message).toString().split("\n")[0]}`); continue; }
 
-      for (const t of ["js", "python", "go", "java", "csharp", "rust", "lua"]) {
+      for (const t of ["js", "python", "go", "java", "csharp", "rust", "lua", "kotlin"]) {
         try {
           const out = norm(runTarget(t, transpile(source, { from: "c", to: t }), dir, name + "_" + t));
           ok(out === ref, `${ex} (C) -> ${t} matches the original C`);

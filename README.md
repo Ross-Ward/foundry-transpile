@@ -9,8 +9,8 @@
   <img alt="Dependencies" src="https://img.shields.io/badge/dependencies-0-brightgreen">
   <img alt="Node" src="https://img.shields.io/badge/node-%E2%89%A518-339933">
   <img alt="Sources" src="https://img.shields.io/badge/sources-MiniLang%20%C2%B7%20JS%20%C2%B7%20Python%20%C2%B7%20TS%20%C2%B7%20C-f7df1e">
-  <img alt="Targets" src="https://img.shields.io/badge/targets-JS%20%C2%B7%20Py%20%C2%B7%20C%20%C2%B7%20Go%20%C2%B7%20Java%20%C2%B7%20C%23%20%C2%B7%20Rust%20%C2%B7%20Lua-654ff0">
-  <img alt="Tests" src="https://img.shields.io/badge/tests-275%2F275-success">
+  <img alt="Targets" src="https://img.shields.io/badge/targets-JS%20%C2%B7%20Py%20%C2%B7%20C%20%C2%B7%20Go%20%C2%B7%20Java%20%C2%B7%20C%23%20%C2%B7%20Rust%20%C2%B7%20Lua%20%C2%B7%20Kotlin-654ff0">
+  <img alt="Tests" src="https://img.shields.io/badge/tests-308%2F308-success">
 </p>
 
 ---
@@ -22,11 +22,11 @@ Part of the **Foundry Tools** engines. The architecture is the point:
    MiniLang ───┐            lexer→parser→type-checker      ┌─ JavaScript · Python
    JavaScript ─┤                                           ├─ C · Go
    Python ─────┤─▶ (infer)  (annotates every node)         ├─ Java · C#
-   TypeScript ─┤                                           └─ Rust · Lua
-   C ──────────┘
+   TypeScript ─┤                                           ├─ Rust · Lua
+   C ──────────┘                                           └─ Kotlin
 ```
 
-**5 source languages × 8 target languages.** MiniLang/TypeScript/C carry explicit types; the JS and
+**5 source languages × 9 target languages.** MiniLang/TypeScript/C carry explicit types; the JS and
 Python frontends infer them. The C frontend even maps `printf` format strings into concatenations and
 turns `int main()` into the IR's void entry.
 
@@ -96,9 +96,10 @@ node bin/transpile.js --from js --to go     examples/js/factorial.js
 node bin/transpile.js --from python --to c  examples/py/primes.py
 node bin/transpile.js --from python --to js examples/py/fizzbuzz.py
 
-# TypeScript source -> Lua / Rust (floats and all)
-node bin/transpile.js --from ts --to lua  examples/ts/stats.ts
-node bin/transpile.js --from ts --to rust examples/ts/stats.ts
+# TypeScript source -> Lua / Rust / Kotlin (floats and all)
+node bin/transpile.js --from ts --to lua    examples/ts/stats.ts
+node bin/transpile.js --from ts --to rust   examples/ts/stats.ts
+node bin/transpile.js --from ts --to kotlin examples/ts/shapes.ts
 
 # real C source -> Rust / Python (printf becomes concatenation)
 node bin/transpile.js --from c --to rust   examples/c/collatz.c
@@ -139,9 +140,10 @@ npm test          # node test/run.js
 ```
 
 To *run* the generated programs the harness needs `node`, `python`, `zig` (the C compiler), `go`,
-`java` (JDK 11+, single-file launch), `rustc`, `dotnet`, and `lua` (5.4). Override any tool's location
-with `TRANSPILE_PYTHON` / `TRANSPILE_ZIG` / `TRANSPILE_GO` / `TRANSPILE_JAVA` / `TRANSPILE_RUST` /
-`TRANSPILE_DOTNET` / `TRANSPILE_LUA`.
+`java` (JDK 11+, single-file launch), `rustc`, `dotnet`, `lua` (5.4), and `kotlinc`. Override any
+tool's location with `TRANSPILE_PYTHON` / `TRANSPILE_ZIG` / `TRANSPILE_GO` / `TRANSPILE_JAVA` /
+`TRANSPILE_RUST` / `TRANSPILE_DOTNET` / `TRANSPILE_LUA` / `TRANSPILE_KOTLINC` (kotlinc gets its
+`JAVA_HOME` derived from the `TRANSPILE_JAVA` path, or set `TRANSPILE_JAVA_HOME`).
 
 ## Roadmap
 
@@ -167,9 +169,13 @@ with `TRANSPILE_PYTHON` / `TRANSPILE_ZIG` / `TRANSPILE_GO` / `TRANSPILE_JAVA` / 
   `true`/`false` printing on every target.
 - **Phase 7 ✅** — **arrays of structs** and **nested structs** across all 8 backends (incl. from
   inferred JS source), with the aliasing rules extended so every target still agrees.
-- **Next** — more backends (Kotlin/Swift — need their toolchains for the run-and-verify harness).
-  The Lua interpreter is built from source with `zig cc` so its backend is verified by running like
-  the rest.
+- **Phase 8 ✅** — a **Kotlin backend** (nine targets): structs as `var` primary-constructor
+  classes, reassigned params shadowed (`var p = p`), `$` escaped in strings, `.toString()` for
+  int-first concatenation, `intArrayOf`/`arrayOf` literals — compiled and run by the harness like
+  every other target.
+- **Next** — a Swift backend (needs the multi-GB Windows toolchain for run-and-verify);
+  per-backend reserved-word escaping. The Lua interpreter is built from source with `zig cc` so its
+  backend is verified by running like the rest.
 
 ## License
 
