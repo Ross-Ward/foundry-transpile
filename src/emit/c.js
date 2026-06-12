@@ -2,10 +2,12 @@
 // C backend. Static types come straight from the checker's annotations.
 // Integer division needs no special-casing: int/int already truncates in C.
 
-const { usesFloatPrint, usesStringConcat, usesArray, usesStringEq } = require("./util");
+const { walk, usesFloatPrint, usesStringConcat, usesArray, usesStringEq } = require("./util");
 
 const CT = { int: "int", float: "double", bool: "bool", string: "const char*", void: "void", "int[]": "IntSlice", "float[]": "FloatSlice", "string[]": "StrSlice" };
-const T = (t) => CT[t] || `${t}*`; // structs are malloc'd pointers (reference semantics)
+// structs are malloc'd pointers (reference semantics); Point[] is a PointSlice
+const T = (t) => CT[t] || (t.endsWith("[]") ? `${t.slice(0, -2)}Slice` : `${t}*`);
+let CSTRUCTS = new Set(); // struct names of the program being emitted
 
 // Stored strings must be duplicated out of the rotating concat buffers
 // (array elements and struct fields outlive them).
@@ -79,12 +81,19 @@ const RUNTIME = [
 
 function emitC(program) {
   const structs = program.structs || [];
+  CSTRUCTS = new Set(structs.map((st) => st.name));
   const out = ["#include <stdio.h>", "#include <stdbool.h>"];
   if (usesStringEq(program)) out.push("#include <string.h>"); // strcmp
   if (usesFloatPrint(program) || usesStringConcat(program)) out.push(RUNTIME);
   if (usesArray(program) || structs.length) out.push(DUP_HELPER);
   if (usesArray(program)) out.push(ARRAY_RUNTIME);
-  for (const st of structs) out.push(emitStruct(st));
+  if (structs.length) {
+    // forward typedefs first, so struct fields and slices can reference any struct
+    out.push(structs.map((st) => `typedef struct ${st.name} ${st.name};`).join("\n"));
+    for (const st of structs) out.push(emitStructBody(st));
+    for (const st of structs) out.push(emitStructCtor(st));
+    for (const name of usedStructArrays(program)) out.push(structSlice(name));
+  }
   out.push("");
 
   // forward declarations so call order never matters
@@ -98,17 +107,42 @@ function emitC(program) {
   return out.join("\n") + "\n";
 }
 
-function emitStruct(st) {
-  const fields = st.fields.map((f) => `${CT[f.type]} ${f.name};`).join(" ");
-  const params = st.fields.map((f) => `${CT[f.type]} ${f.name}`).join(", ");
+function emitStructBody(st) {
+  return `struct ${st.name} { ${st.fields.map((f) => `${T(f.type)} ${f.name};`).join(" ")} };`;
+}
+
+function emitStructCtor(st) {
+  const params = st.fields.map((f) => `${T(f.type)} ${f.name}`).join(", ");
   const inits = st.fields
     .map((f) => `s->${f.name} = ${f.type === "string" ? `__dups(${f.name})` : f.name};`)
     .join(" ");
   return [
-    `typedef struct { ${fields} } ${st.name};`,
     `static ${st.name} *__new_${st.name}(${params || "void"}) {`,
     `    ${st.name} *s = (${st.name} *)malloc(sizeof(${st.name}));`,
     `    ${inits}`,
+    `    return s;`,
+    `}`,
+  ].join("\n");
+}
+
+// struct names that appear as an array element type anywhere in the program
+function usedStructArrays(program) {
+  const used = new Set();
+  walk(program, (n) => {
+    if (typeof n.type === "string" && n.type.endsWith("[]") && CSTRUCTS.has(n.type.slice(0, -2)))
+      used.add(n.type.slice(0, -2));
+  });
+  return [...used];
+}
+
+function structSlice(name) {
+  return [
+    `typedef struct { ${name} **data; int len; } ${name}Slice;`,
+    `static ${name}Slice __arr_${name}(int n, ...) {`,
+    `    ${name}Slice s; s.len = n; s.data = (${name} **)malloc(sizeof(${name} *) * (n > 0 ? n : 1));`,
+    `    va_list ap; va_start(ap, n);`,
+    `    for (int i = 0; i < n; i++) s.data[i] = va_arg(ap, ${name} *);`,
+    `    va_end(ap);`,
     `    return s;`,
     `}`,
   ].join("\n");
@@ -189,7 +223,7 @@ function E(e) {
       return `(${E(e.l)} ${e.op} ${E(e.r)})`;
     case "Array": {
       const et = e.type.slice(0, -2);
-      const ctor = et === "float" ? "__arrf" : et === "string" ? "__arrs" : "__arr";
+      const ctor = et === "float" ? "__arrf" : et === "string" ? "__arrs" : CSTRUCTS.has(et) ? `__arr_${et}` : "__arr";
       return `${ctor}(${e.elems.length}${e.elems.length ? ", " + e.elems.map(E).join(", ") : ""})`;
     }
     case "NewArray": return `__newarr(${E(e.size)})`;

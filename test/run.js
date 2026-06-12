@@ -226,6 +226,16 @@ function main() {
   } catch { threw = true; }
   ok(threw, "js frontend: rejects out-of-order constructor field assignment");
 
+  threw = false;
+  try { transpile(PT + "func main(): void { let xs: P[] = [P(1)]; let a: P = xs[0]; }", { to: "js" }); } catch { threw = true; }
+  ok(threw, "checker: rejects aliasing a struct out of an array");
+
+  threw = false;
+  try {
+    transpile("struct I { v: int; } struct O { i: I; } func main(): void { let o: O = O(I(1)); let a: I = o.i; }", { to: "js" });
+  } catch { threw = true; }
+  ok(threw, "checker: rejects aliasing a nested struct field");
+
   const tscs = transpile("class V { constructor(public x: int) {} }\nfunction main(): void { let v = new V(7); console.log(v.x); }\nmain();", { from: "ts", to: "csharp" });
   ok(tscs.includes("class V"), "ts frontend: parameter-property classes become C# classes");
 

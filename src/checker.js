@@ -10,17 +10,22 @@ const NUMERIC = new Set(["int", "float"]);
 const VALUE_TYPES = new Set(["int", "float", "bool", "string"]);
 
 function check(program) {
-  // struct declarations: name -> ordered field list
+  // struct declarations: name -> ordered field list (names first, so a field
+  // may be another struct regardless of declaration order)
   const structs = new Map();
   for (const st of program.structs || []) {
     if (structs.has(st.name)) throw new TranspileError(`duplicate struct '${st.name}'`);
+    structs.set(st.name, st.fields);
+  }
+  for (const st of program.structs || []) {
     const seen = new Set();
     for (const f of st.fields) {
       if (seen.has(f.name)) throw new TranspileError(`duplicate field '${f.name}' in struct '${st.name}'`);
       seen.add(f.name);
-      if (!VALUE_TYPES.has(f.type)) throw new TranspileError(`struct field '${st.name}.${f.name}' must be int/float/bool/string, got ${f.type}`);
+      if (!VALUE_TYPES.has(f.type) && !structs.has(f.type))
+        throw new TranspileError(`struct field '${st.name}.${f.name}' must be a value type or a struct, got ${f.type}`);
+      if (f.type === st.name) throw new TranspileError(`struct '${st.name}' cannot contain itself`);
     }
-    structs.set(st.name, st.fields);
   }
 
   // collect function signatures first (so calls can refer to later funcs)
@@ -40,16 +45,18 @@ function check(program) {
 
 function validType(t, structs) {
   const base = t.endsWith("[]") ? t.slice(0, -2) : t;
-  if (t.endsWith("[]")) return VALUE_TYPES.has(base); // no arrays of structs (yet)
+  if (t.endsWith("[]")) return VALUE_TYPES.has(base) || structs.has(base);
   return VALUE_TYPES.has(t) || t === "void" || structs.has(t);
 }
 
 // Structs have reference semantics in every target except Rust, where they are
-// owned values passed by &mut. Aliasing a struct variable (`let q = p`) would
-// behave differently across targets, so it is rejected outright.
+// owned values passed by &mut. Aliasing a struct (`let q = p`, `let q = xs[0]`,
+// `let q = b.inner`) would behave differently across targets, so any read of an
+// existing struct into a binding is rejected; construct a fresh one or pass it
+// to a function instead.
 function noAlias(expr, t, ctx, where) {
-  if (ctx.structs.has(t) && expr.kind === "Var")
-    throw new TranspileError(`cannot alias struct value '${expr.name}' in ${where}; construct a new one`);
+  if (ctx.structs.has(t) && ["Var", "Field", "Index"].includes(expr.kind))
+    throw new TranspileError(`cannot alias a struct value in ${where}; construct a new one or pass it to a function`);
 }
 
 function checkFunc(func, sigs, structs) {
@@ -99,6 +106,7 @@ function checkStmt(s, ctx) {
       if (!fld) throw new TranspileError(`struct '${ot}' has no field '${s.name}'`);
       const t = infer(s.expr, ctx);
       if (t !== fld.type) throw new TranspileError(`field '${ot}.${s.name}' is ${fld.type}, cannot assign ${t}`);
+      noAlias(s.expr, t, ctx, "field assignment");
       break;
     }
     case "IndexAssign": {
@@ -107,6 +115,7 @@ function checkStmt(s, ctx) {
       if (infer(s.idx, ctx) !== "int") throw new TranspileError(`array index must be int`);
       const et = arrT.slice(0, -2);
       if (infer(s.expr, ctx) !== et) throw new TranspileError(`array element is ${et}`);
+      noAlias(s.expr, et, ctx, "index assignment");
       break;
     }
     case "If":
@@ -196,6 +205,8 @@ function inferRaw(e, ctx) {
       }
       throw new TranspileError(`bad operator ${op}`);
     }
+    case "StructLit": // a constructor inferred a second time (e.g. as elems[0] of an array literal)
+      return e.name;
     case "Call": {
       // `Point(3, 4)` parses as a call; a struct name makes it a constructor
       const fields = ctx.structs.get(e.name);
@@ -225,8 +236,11 @@ function inferRaw(e, ctx) {
     case "Array": {
       if (e.elems.length === 0) throw new TranspileError("empty array literal needs a type; use array(n)");
       const et = infer(e.elems[0], ctx);
-      if (!["int", "float", "bool", "string"].includes(et)) throw new TranspileError(`bad array element type ${et}`);
-      for (const el of e.elems) if (infer(el, ctx) !== et) throw new TranspileError(`array elements must all be ${et}`);
+      if (!VALUE_TYPES.has(et) && !ctx.structs.has(et)) throw new TranspileError(`bad array element type ${et}`);
+      for (const el of e.elems) {
+        if (infer(el, ctx) !== et) throw new TranspileError(`array elements must all be ${et}`);
+        noAlias(el, et, ctx, "an array literal");
+      }
       return et + "[]";
     }
     case "NewArray":

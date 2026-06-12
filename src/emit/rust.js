@@ -8,7 +8,7 @@ const { usesFloatPrint } = require("./util");
 // string -> String (owned) so concatenation via format! type-checks; literals
 // become "...".to_string().
 const RT = { int: "i64", float: "f64", bool: "bool", string: "String", void: "", "int[]": "Vec<i64>", "float[]": "Vec<f64>", "string[]": "Vec<String>" };
-const T = (t) => RT[t] ?? t; // struct -> its own name
+const T = (t) => RT[t] ?? (t.endsWith("[]") ? `Vec<${T(t.slice(0, -2))}>` : t); // struct -> its name; Point[] -> Vec<Point>
 
 // Like Vecs, structs are owned values passed by &mut (reference semantics
 // everywhere else; the checker rejects aliasing so the two models agree).
@@ -26,7 +26,7 @@ function emitRust(program) {
   const out = [];
   if (usesFloatPrint(program)) out.push(FLOAT_HELPER);
   for (const st of program.structs || []) {
-    out.push(`struct ${st.name} {\n${st.fields.map((fl) => `    ${fl.name}: ${RT[fl.type]},`).join("\n")}\n}`);
+    out.push(`struct ${st.name} {\n${st.fields.map((fl) => `    ${fl.name}: ${T(fl.type)},`).join("\n")}\n}`);
   }
   for (const f of program.funcs) out.push(emitFunc(f).replace(/\n$/, ""));
   return out.join("\n\n") + "\n";
@@ -47,13 +47,19 @@ function emitFunc(f) {
   return `${head} {\n${emitBlock(f.body, 1, mut)}}\n`;
 }
 
+// the variable at the root of an lvalue chain: xs[i].inner.x -> xs
+function rootVar(n) {
+  while (n && (n.kind === "Index" || n.kind === "Field")) n = n.kind === "Index" ? n.arr : n.obj;
+  return n && n.kind === "Var" ? n.name : null;
+}
+
 function collectMutated(node, set) {
   if (!node || typeof node !== "object") return;
   if (node.kind === "Assign") set.add(node.name);
-  if (node.kind === "IndexAssign" && node.arr.kind === "Var") set.add(node.arr.name); // a[i] = .. mutates a
-  if (node.kind === "FieldAssign" && node.obj.kind === "Var") set.add(node.obj.name); // p.x = .. mutates p
-  // arrays and structs are passed as &mut, so such argument variables must be `mut`
-  if (node.kind === "Call") for (const a of node.args) if (a.kind === "Var" && isRef(a.type)) set.add(a.name);
+  if (node.kind === "IndexAssign") { const r = rootVar(node.arr); if (r) set.add(r); } // a[i] = .. mutates a
+  if (node.kind === "FieldAssign") { const r = rootVar(node.obj); if (r) set.add(r); } // p.x = .. mutates p
+  // arrays and structs are passed as &mut, so the argument's root variable must be `mut`
+  if (node.kind === "Call") for (const a of node.args) if (isRef(a.type)) { const r = rootVar(a); if (r) set.add(r); }
   for (const k of Object.keys(node)) {
     const v = node[k];
     if (Array.isArray(v)) v.forEach((x) => collectMutated(x, set));

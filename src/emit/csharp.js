@@ -21,8 +21,8 @@ function emitCSharp(program) {
 }
 
 function emitStruct(st) {
-  const fields = st.fields.map((f) => `        public ${CS[f.type]} ${f.name};`).join("\n");
-  const params = st.fields.map((f) => `${CS[f.type]} ${f.name}`).join(", ");
+  const fields = st.fields.map((f) => `        public ${T(f.type)} ${f.name};`).join("\n");
+  const params = st.fields.map((f) => `${T(f.type)} ${f.name}`).join(", ");
   const inits = st.fields.map((f) => `this.${f.name} = ${f.name};`).join(" ");
   return `    class ${st.name} {\n${fields}\n        public ${st.name}(${params}) { ${inits} }\n    }\n`;
 }
@@ -77,8 +77,8 @@ function E(e) {
       }
       return `(${E(e.l)} ${e.op} ${E(e.r)})`;
     }
-    case "Array": return `new ${CS[e.type.slice(0, -2)]}[]{${e.elems.map(E).join(", ")}}`;
-    case "NewArray": return `new ${CS[e.type.slice(0, -2)]}[${E(e.size)}]`;
+    case "Array": return `new ${T(e.type.slice(0, -2))}[]{${e.elems.map(E).join(", ")}}`;
+    case "NewArray": return `new ${T(e.type.slice(0, -2))}[${E(e.size)}]`;
     case "Index": return `${E(e.arr)}[${E(e.idx)}]`;
     case "Len": return `${E(e.arr)}.Length`;
     case "StructLit": return `new ${e.name}(${e.args.map(E).join(", ")})`;

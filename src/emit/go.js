@@ -5,8 +5,9 @@
 const { usesFloatPrint } = require("./util");
 
 const GT = { int: "int", float: "float64", bool: "bool", string: "string", "int[]": "[]int", "float[]": "[]float64", "string[]": "[]string" };
-// structs get reference semantics (like every other target), hence *Name
-const T = (t) => GT[t] || `*${t}`;
+// structs get reference semantics (like every other target), hence *Name;
+// Point[] is a slice of those references
+const T = (t) => GT[t] || (t.endsWith("[]") ? "[]" + T(t.slice(0, -2)) : `*${t}`);
 
 const FLOAT_HELPER =
   'func __f(x float64) string {\n' +
@@ -20,7 +21,7 @@ function emitGo(program) {
   const out = ["package main", "", `import (\n${imports.map((i) => "\t" + i).join("\n")}\n)`, ""];
   if (needFloat) out.push(FLOAT_HELPER, "");
   for (const st of program.structs || []) {
-    out.push(`type ${st.name} struct {\n${st.fields.map((fl) => `\t${fl.name} ${GT[fl.type]}`).join("\n")}\n}\n`);
+    out.push(`type ${st.name} struct {\n${st.fields.map((fl) => `\t${fl.name} ${T(fl.type)}`).join("\n")}\n}\n`);
   }
   for (const f of program.funcs) out.push(emitFunc(f));
   return out.join("\n") + "\n";
@@ -74,8 +75,8 @@ function E(e) {
       }
       return `(${E(e.l)} ${e.op} ${E(e.r)})`;
     }
-    case "Array": return `[]${GT[e.type.slice(0, -2)]}{${e.elems.map(E).join(", ")}}`;
-    case "NewArray": return `make([]${GT[e.type.slice(0, -2)]}, ${E(e.size)})`;
+    case "Array": return `[]${T(e.type.slice(0, -2))}{${e.elems.map(E).join(", ")}}`;
+    case "NewArray": return `make([]${T(e.type.slice(0, -2))}, ${E(e.size)})`;
     case "Index": return `${E(e.arr)}[${E(e.idx)}]`;
     case "Len": return `len(${E(e.arr)})`;
     case "StructLit": return `&${e.name}{${e.fieldNames.map((f, i) => `${f}: ${E(e.args[i])}`).join(", ")}}`;

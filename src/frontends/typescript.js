@@ -70,7 +70,11 @@ function tsParse(src) {
   function typeName() {
     const t = expect("id").value;
     if (!(t in TYPE_MAP)) {
-      if (structNames.has(t)) return t; // class type (declared above its use)
+      if (structNames.has(t)) { // class type (declared above its use)
+        let ty = t;
+        while (isOp("[")) { next(); expect("op", "]"); ty += "[]"; } // Point[]
+        return ty;
+      }
       throw new TranspileError(`unknown type '${t}'`);
     }
     let ty = TYPE_MAP[t];

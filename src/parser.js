@@ -55,7 +55,11 @@ function parse(src) {
       while (isOp("[")) { next(); expect("op", "]"); t += "[]"; } // array type, e.g. int[]
       return t;
     }
-    if (cur().kind === "id") return next().value; // struct type — the checker validates it
+    if (cur().kind === "id") { // struct type — the checker validates it
+      let t = next().value;
+      while (isOp("[")) { next(); expect("op", "]"); t += "[]"; } // Point[]
+      return t;
+    }
     const c = cur();
     throw new TranspileError(`expected a type, found '${c.value ?? c.kind}'`, c.line, c.col);
   }
