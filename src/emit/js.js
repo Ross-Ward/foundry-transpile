@@ -2,12 +2,17 @@
 // JavaScript backend. Integer division is normalised with Math.trunc so it
 // matches C/Go/Python semantics (JS '/' is otherwise floating point).
 
-const { usesFloatPrint } = require("./util");
+const { usesFloatPrint, renameReserved } = require("./util");
+
+const RESERVED = new Set(("break case catch class const continue debugger default delete do else enum export extends " +
+  "finally for function if import in instanceof let new return static super switch this throw try typeof var void " +
+  "while with yield await null true false undefined NaN Infinity Math console").split(" "));
 
 const FLOAT_HELPER =
   'function __f(x) {\n  let s = x.toFixed(6).replace(/0+$/, "");\n  return s.endsWith(".") ? s + "0" : s;\n}';
 
 function emitJS(program) {
+  renameReserved(program, RESERVED);
   const out = [];
   if (usesFloatPrint(program)) out.push(FLOAT_HELPER);
   for (const f of program.funcs) out.push(emitFunc(f));
@@ -35,6 +40,9 @@ function emitStmt(s, d) {
     case "Return": return `${pad}return${s.expr ? " " + E(s.expr) : ""};`;
     case "ExprStmt": return `${pad}${E(s.expr)};`;
     case "While": return `${pad}while (${E(s.cond)}) {\n${emitBlock(s.body, d + 1)}${pad}}`;
+    case "For": return `${pad}for (${clause(s.init)}; ${E(s.cond)}; ${clause(s.post)}) {\n${emitBlock(s.body, d + 1)}${pad}}`;
+    case "Break": return `${pad}break;`;
+    case "Continue": return `${pad}continue;`;
     case "If": {
       let out = `${pad}if (${E(s.cond)}) {\n${emitBlock(s.then, d + 1)}${pad}}`;
       if (s.els) out += ` else {\n${emitBlock(s.els, d + 1)}${pad}}`;
@@ -43,6 +51,11 @@ function emitStmt(s, d) {
     case "Block": return `${pad}{\n${emitBlock(s, d + 1)}${pad}}`; // braced scope (e.g. a desugared for)
     default: throw new Error(`js: unknown stmt ${s.kind}`);
   }
+}
+
+// render a statement as a for-clause (no padding, no trailing semicolon)
+function clause(s) {
+  return emitStmt(s, 0).replace(/;$/, "");
 }
 
 function E(e) {
@@ -66,6 +79,9 @@ function E(e) {
     case "Len": return `${E(e.arr)}.length`;
     case "StructLit": return `{ ${e.fieldNames.map((f, i) => `${f}: ${E(e.args[i])}`).join(", ")} }`;
     case "Field": return `${E(e.obj)}.${e.name}`;
+    case "Cond": return `(${E(e.c)} ? ${E(e.t)} : ${E(e.f)})`;
+    case "Substr": return `${E(e.s)}.substring(${E(e.start)}, ${E(e.end)})`;
+    case "Cast": return e.to === "int" ? `Math.trunc(${E(e.e)})` : `(${E(e.e)})`; // JS numbers are already floats
     default: throw new Error(`js: unknown expr ${e.kind}`);
   }
 }

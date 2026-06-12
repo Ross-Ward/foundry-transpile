@@ -2,7 +2,11 @@
 // Go backend. `while` becomes `for cond {}`; int/int division truncates in Go,
 // so no special-casing. Types come from the checker's annotations.
 
-const { usesFloatPrint } = require("./util");
+const { walk, usesFloatPrint, renameReserved } = require("./util");
+
+const RESERVED = new Set(("break case chan const continue default defer else fallthrough for func go goto if import " +
+  "interface map package range return select struct switch type var int string bool float64 len cap make new append " +
+  "copy nil true false fmt iota println print").split(" "));
 
 const GT = { int: "int", float: "float64", bool: "bool", string: "string", "int[]": "[]int", "float[]": "[]float64", "string[]": "[]string" };
 // structs get reference semantics (like every other target), hence *Name;
@@ -14,12 +18,20 @@ const FLOAT_HELPER =
   '\ts := strings.TrimRight(strconv.FormatFloat(x, \'f\', 6, 64), "0")\n' +
   '\tif strings.HasSuffix(s, ".") {\n\t\ts += "0"\n\t}\n\treturn s\n}';
 
+const TRUNC_HELPER = "func __trunc(x float64) int {\n\treturn int(x)\n}";
+
 function emitGo(program) {
+  renameReserved(program, RESERVED);
   const needFloat = usesFloatPrint(program);
+  // Go rejects truncating CONSTANT conversions (int(7.9) is a compile error),
+  // so float->int casts go through a function to force runtime semantics
+  let needTrunc = false;
+  walk(program, (n) => { if (n.kind === "Cast" && n.to === "int" && n.e && n.e.type === "float") needTrunc = true; });
   const imports = ['"fmt"'];
   if (needFloat) imports.push('"strconv"', '"strings"');
   const out = ["package main", "", `import (\n${imports.map((i) => "\t" + i).join("\n")}\n)`, ""];
   if (needFloat) out.push(FLOAT_HELPER, "");
+  if (needTrunc) out.push(TRUNC_HELPER, "");
   for (const st of program.structs || []) {
     out.push(`type ${st.name} struct {\n${st.fields.map((fl) => `\t${fl.name} ${T(fl.type)}`).join("\n")}\n}\n`);
   }
@@ -48,6 +60,13 @@ function emitStmt(s, d) {
     case "Return": return `${pad}return${s.expr ? " " + E(s.expr) : ""}`;
     case "ExprStmt": return `${pad}${E(s.expr)}`;
     case "While": return `${pad}for ${E(s.cond)} {\n${emitBlock(s.body, d + 1)}${pad}}`;
+    case "For": {
+      // a for-clause init must be a simple statement, so Let becomes :=
+      const init = s.init.kind === "Let" ? `${s.init.name} := ${E(s.init.expr)}` : emitStmt(s.init, 0);
+      return `${pad}for ${init}; ${E(s.cond)}; ${emitStmt(s.post, 0)} {\n${emitBlock(s.body, d + 1)}${pad}}`;
+    }
+    case "Break": return `${pad}break`;
+    case "Continue": return `${pad}continue`;
     case "If": {
       let out = `${pad}if ${E(s.cond)} {\n${emitBlock(s.then, d + 1)}${pad}}`;
       if (s.els) out += ` else {\n${emitBlock(s.els, d + 1)}${pad}}`;
@@ -81,6 +100,13 @@ function E(e) {
     case "Len": return `len(${E(e.arr)})`;
     case "StructLit": return `&${e.name}{${e.fieldNames.map((f, i) => `${f}: ${E(e.args[i])}`).join(", ")}}`;
     case "Field": return `${E(e.obj)}.${e.name}`;
+    case "Cond": // Go has no ternary; an immediately-invoked closure is the expression form
+      return `func() ${T(e.type)} { if ${E(e.c)} { return ${E(e.t)} }; return ${E(e.f)} }()`;
+    case "Substr": return `${E(e.s)}[${E(e.start)}:${E(e.end)}]`;
+    case "Cast": {
+      if (e.to === "int") return e.e.type === "float" ? `__trunc(${E(e.e)})` : `(${E(e.e)})`;
+      return e.e.type === "int" ? `float64(${E(e.e)})` : `(${E(e.e)})`;
+    }
     default: throw new Error(`go: unknown expr ${e.kind}`);
   }
 }

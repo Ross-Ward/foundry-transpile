@@ -12,7 +12,7 @@
 const { TranspileError } = require("../lexer");
 const { inferTypes } = require("../infer");
 
-const KEYWORDS = new Set(["def", "return", "if", "elif", "else", "while", "for", "in", "and", "or", "not", "True", "False", "pass", "class"]);
+const KEYWORDS = new Set(["def", "return", "if", "elif", "else", "while", "for", "in", "and", "or", "not", "True", "False", "pass", "class", "break", "continue"]);
 const OPS = ["==", "!=", "<=", ">=", "//", "+=", "-=", "*=", "+", "-", "*", "/", "%", "=", "<", ">", "(", ")", "[", "]", ",", ":", "."];
 
 // ---- tokenizer with INDENT / DEDENT / NEWLINE ------------------------------
@@ -169,6 +169,8 @@ function pyParse(src) {
 
   function stmt() {
     if (at("kw", "pass")) { next(); expect("NEWLINE"); return null; }
+    if (at("kw", "break")) { next(); expect("NEWLINE"); return { kind: "Break" }; }
+    if (at("kw", "continue")) { next(); expect("NEWLINE"); return { kind: "Continue" }; }
     if (at("kw", "return")) return returnStmt();
     if (at("kw", "if")) return ifStmt();
     if (at("kw", "while")) return whileStmt();
@@ -250,20 +252,26 @@ function pyParse(src) {
 
     declared.add(name);
     return {
-      kind: "Block",
-      stmts: [
-        { kind: "Let", name, type: null, expr: start },
-        {
-          kind: "While",
-          cond: { kind: "Bin", op: "<", l: { kind: "Var", name }, r: stop },
-          body: { kind: "Block", stmts: [...body.stmts, { kind: "Assign", name, expr: { kind: "Bin", op: "+", l: { kind: "Var", name }, r: step } }] },
-        },
-      ],
+      kind: "For",
+      init: { kind: "Let", name, type: null, expr: start },
+      cond: { kind: "Bin", op: "<", l: { kind: "Var", name }, r: stop },
+      post: { kind: "Assign", name, expr: { kind: "Bin", op: "+", l: { kind: "Var", name }, r: step } },
+      body,
     };
   }
 
-  // expressions
-  function expr() { return orExpr(); }
+  // expressions; `a if c else b` (conditional expression) above or
+  function expr() {
+    const t = orExpr();
+    if (at("kw", "if")) {
+      next();
+      const c = orExpr();
+      expect("kw", "else");
+      const f = expr();
+      return { kind: "Cond", c, t, f };
+    }
+    return t;
+  }
   function binLevel(sub, ops, map) {
     return () => {
       let left = sub();
@@ -290,7 +298,14 @@ function pyParse(src) {
     let e = primaryBase();
     while (isOp("[") || isOp(".")) {
       if (eatOp(".")) { e = { kind: "Field", obj: e, name: expect("id").value }; continue; }
-      next(); const idx = expr(); expect("op", "]");
+      next(); const idx = expr();
+      if (eatOp(":")) { // slice: s[a:b] -> substr (end-exclusive, like Python)
+        const end = expr();
+        expect("op", "]");
+        e = { kind: "Substr", s: e, start: idx, end };
+        continue;
+      }
+      expect("op", "]");
       e = { kind: "Index", arr: e, idx };
     }
     return e;
@@ -311,6 +326,7 @@ function pyParse(src) {
         if (!isOp(")")) do { args.push(expr()); } while (eatOp(","));
         expect("op", ")");
         if (c.value === "len" && args.length === 1) return { kind: "Len", arr: args[0] }; // builtin
+        if ((c.value === "int" || c.value === "float") && args.length === 1) return { kind: "Cast", to: c.value, e: args[0] };
         return { kind: "Call", name: c.value, args };
       }
       return { kind: "Var", name: c.value };

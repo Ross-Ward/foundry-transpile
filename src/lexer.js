@@ -5,12 +5,13 @@
 const KEYWORDS = new Set([
   "func", "let", "if", "else", "while", "for", "return", "print",
   "true", "false", "int", "float", "bool", "string", "void", "struct",
+  "break", "continue",
 ]);
 
 // Multi-char operators are matched before single-char ones.
 const OPS3 = [];
 const OPS2 = ["==", "!=", "<=", ">=", "&&", "||"];
-const OPS1 = "+-*/%=<>!(){}[],;:.".split("");
+const OPS1 = "+-*/%=<>!(){}[],;:.?".split("");
 
 class Token {
   constructor(kind, value, line, col) {

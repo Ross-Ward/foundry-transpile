@@ -3,7 +3,12 @@
 // user's `main()` is overloaded alongside the JVM entry `main(String[])`.
 // String == becomes .equals(). Integer division truncates natively.
 
-const { usesFloatPrint } = require("./util");
+const { usesFloatPrint, renameReserved } = require("./util");
+
+const RESERVED = new Set(("abstract assert boolean break byte case catch char class const continue default do double " +
+  "else enum extends final finally float for goto if implements import instanceof int interface long native new " +
+  "package private protected public return short static strictfp super switch synchronized this throw throws " +
+  "transient try void volatile while true false null String System Program record var yield sealed permits").split(" "));
 
 const JT = { int: "int", float: "double", bool: "boolean", string: "String", void: "void", "int[]": "int[]", "float[]": "double[]", "string[]": "String[]" };
 const T = (t) => JT[t] || t; // struct -> its class name
@@ -14,6 +19,7 @@ const FLOAT_HELPER =
   '        return s.endsWith(".") ? s + "0" : s;\n    }\n';
 
 function emitJava(program) {
+  renameReserved(program, RESERVED);
   const structs = (program.structs || []).map(emitStruct).join("\n");
   const body = program.funcs.map(emitFunc).join("\n");
   const helper = usesFloatPrint(program) ? FLOAT_HELPER : "";
@@ -47,6 +53,9 @@ function emitStmt(s, d) {
     case "Return": return `${pad}return${s.expr ? " " + E(s.expr) : ""};`;
     case "ExprStmt": return `${pad}${E(s.expr)};`;
     case "While": return `${pad}while (${E(s.cond)}) {\n${emitBlock(s.body, d + 1)}${pad}}`;
+    case "For": return `${pad}for (${emitStmt(s.init, 0).replace(/;$/, "")}; ${E(s.cond)}; ${emitStmt(s.post, 0).replace(/;$/, "")}) {\n${emitBlock(s.body, d + 1)}${pad}}`;
+    case "Break": return `${pad}break;`;
+    case "Continue": return `${pad}continue;`;
     case "If": {
       let out = `${pad}if (${E(s.cond)}) {\n${emitBlock(s.then, d + 1)}${pad}}`;
       if (s.els) out += ` else {\n${emitBlock(s.els, d + 1)}${pad}}`;
@@ -72,14 +81,19 @@ function E(e) {
         const eq = `${E(e.l)}.equals(${E(e.r)})`;
         return e.op === "==" ? `(${eq})` : `(!${eq})`;
       }
+      if (["<", ">", "<=", ">="].includes(e.op) && e.l.type === "string")
+        return `(${E(e.l)}.compareTo(${E(e.r)}) ${e.op} 0)`;
       return `(${E(e.l)} ${e.op} ${E(e.r)})`;
     }
     case "Array": return `new ${T(e.type.slice(0, -2))}[]{${e.elems.map(E).join(", ")}}`;
     case "NewArray": return `new ${T(e.type.slice(0, -2))}[${E(e.size)}]`;
     case "Index": return `${E(e.arr)}[${E(e.idx)}]`;
-    case "Len": return `${E(e.arr)}.length`;
+    case "Len": return e.arr.type === "string" ? `${E(e.arr)}.length()` : `${E(e.arr)}.length`;
     case "StructLit": return `new ${e.name}(${e.args.map(E).join(", ")})`;
     case "Field": return `${E(e.obj)}.${e.name}`;
+    case "Cond": return `(${E(e.c)} ? ${E(e.t)} : ${E(e.f)})`;
+    case "Substr": return `${E(e.s)}.substring(${E(e.start)}, ${E(e.end)})`;
+    case "Cast": return e.to === "int" ? `(int)(${E(e.e)})` : `(double)(${E(e.e)})`;
     default: throw new Error(`java: unknown expr ${e.kind}`);
   }
 }

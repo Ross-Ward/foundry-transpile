@@ -6,7 +6,12 @@
 // literals (template syntax), and `int + string` needs .toString() on the left
 // (String.plus(Any) only works string-first).
 
-const { usesFloatPrint } = require("./util");
+const { usesFloatPrint, renameReserved } = require("./util");
+
+const RESERVED = new Set(("as break class continue do else false for fun if in interface is null object package " +
+  "return super this throw true try typealias typeof val var when while by catch constructor delegate dynamic field " +
+  "file finally get import init param property receiver set setparam where it println String Int Double Boolean " +
+  "IntArray DoubleArray Array run to until step downTo").split(" "));
 
 const KT = { int: "Int", float: "Double", bool: "Boolean", string: "String", void: "", "int[]": "IntArray", "float[]": "DoubleArray", "string[]": "Array<String>" };
 const T = (t) => KT[t] ?? (t.endsWith("[]") ? `Array<${T(t.slice(0, -2))}>` : t); // struct -> its class name
@@ -18,6 +23,7 @@ const FLOAT_HELPER =
   "    return s\n}";
 
 function emitKotlin(program) {
+  renameReserved(program, RESERVED);
   const out = [];
   if (usesFloatPrint(program)) out.push(FLOAT_HELPER);
   for (const st of program.structs || []) {
@@ -52,11 +58,13 @@ function collectReassigned(node, set) {
   }
 }
 
-function emitBlock(block, d) {
-  return block.stmts.map((s) => emitStmt(s, d)).join("\n") + (block.stmts.length ? "\n" : "");
+function emitBlock(block, d, loop) {
+  return block.stmts.map((s) => emitStmt(s, d, loop)).join("\n") + (block.stmts.length ? "\n" : "");
 }
 
-function emitStmt(s, d) {
+// `loop` carries the enclosing For's post statement (Kotlin has no 3-clause
+// for, so `continue` must run the post step explicitly first).
+function emitStmt(s, d, loop) {
   const pad = "    ".repeat(d);
   switch (s.kind) {
     case "Let": return `${pad}var ${s.name}: ${T(s.type)} = ${E(s.expr)}`;
@@ -66,13 +74,22 @@ function emitStmt(s, d) {
     case "FieldAssign": return `${pad}${E(s.obj)}.${s.name} = ${E(s.expr)}`;
     case "Return": return `${pad}return${s.expr ? " " + E(s.expr) : ""}`;
     case "ExprStmt": return `${pad}${E(s.expr)}`;
-    case "While": return `${pad}while (${E(s.cond)}) {\n${emitBlock(s.body, d + 1)}${pad}}`;
+    case "While": return `${pad}while (${E(s.cond)}) {\n${emitBlock(s.body, d + 1, null)}${pad}}`;
+    case "For":
+      return `${pad}run {\n${emitStmt(s.init, d + 1, null)}\n` +
+        `${pad}    while (${E(s.cond)}) {\n` +
+        emitBlock(s.body, d + 2, { post: s.post }) +
+        `${emitStmt(s.post, d + 2, null)}\n${pad}    }\n${pad}}`;
+    case "Break": return `${pad}break`;
+    case "Continue":
+      if (loop && loop.post) return `${emitStmt(loop.post, d, null)}\n${pad}continue`;
+      return `${pad}continue`;
     case "If": {
-      let out = `${pad}if (${E(s.cond)}) {\n${emitBlock(s.then, d + 1)}${pad}}`;
-      if (s.els) out += ` else {\n${emitBlock(s.els, d + 1)}${pad}}`;
+      let out = `${pad}if (${E(s.cond)}) {\n${emitBlock(s.then, d + 1, loop)}${pad}}`;
+      if (s.els) out += ` else {\n${emitBlock(s.els, d + 1, loop)}${pad}}`;
       return out;
     }
-    case "Block": return `${pad}run {\n${emitBlock(s, d + 1)}${pad}}`; // scoped block (bare {} is a lambda)
+    case "Block": return `${pad}run {\n${emitBlock(s, d + 1, loop)}${pad}}`; // scoped block (bare {} is a lambda)
     default: throw new Error(`kotlin: unknown stmt ${s.kind}`);
   }
 }
@@ -101,9 +118,12 @@ function E(e) {
     }
     case "NewArray": return `IntArray(${E(e.size)})`;
     case "Index": return `${E(e.arr)}[${E(e.idx)}]`;
-    case "Len": return `${E(e.arr)}.size`;
+    case "Len": return e.arr.type === "string" ? `${E(e.arr)}.length` : `${E(e.arr)}.size`;
+    case "Substr": return `${E(e.s)}.substring(${E(e.start)}, ${E(e.end)})`;
+    case "Cast": return e.to === "int" ? `(${E(e.e)}).toInt()` : `(${E(e.e)}).toDouble()`; // toInt() truncates toward zero
     case "StructLit": return `${e.name}(${e.args.map(E).join(", ")})`;
     case "Field": return `${E(e.obj)}.${e.name}`;
+    case "Cond": return `(if (${E(e.c)}) ${E(e.t)} else ${E(e.f)})`;
     default: throw new Error(`kotlin: unknown expr ${e.kind}`);
   }
 }

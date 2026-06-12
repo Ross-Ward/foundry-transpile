@@ -12,10 +12,10 @@ const { TranspileError } = require("../lexer");
 const { inferTypes } = require("../infer");
 
 // ---- tokenizer -------------------------------------------------------------
-const KEYWORDS = new Set(["function", "let", "const", "var", "return", "if", "else", "while", "for", "true", "false", "class", "new", "this"]);
+const KEYWORDS = new Set(["function", "let", "const", "var", "return", "if", "else", "while", "for", "true", "false", "class", "new", "this", "break", "continue"]);
 const OPS = [
   "===", "!==", "==", "!=", "<=", ">=", "+=", "-=", "*=", "/=", "&&", "||", "++", "--",
-  "+", "-", "*", "/", "%", "=", "<", ">", "!", "(", ")", "{", "}", "[", "]", ",", ";", ".",
+  "+", "-", "*", "/", "%", "=", "<", ">", "!", "(", ")", "{", "}", "[", "]", ",", ";", ".", "?", ":",
 ];
 
 function tokenize(src) {
@@ -147,6 +147,8 @@ function jsParse(src) {
     if (at("kw", "if")) return ifStmt();
     if (at("kw", "while")) return whileStmt();
     if (at("kw", "for")) return forStmt();
+    if (at("kw", "break")) { next(); expect("op", ";"); return { kind: "Break" }; }
+    if (at("kw", "continue")) { next(); expect("op", ";"); return { kind: "Continue" }; }
     // console.log(...)
     if (at("id", "console") && toks[p + 1].kind === "op" && toks[p + 1].value === ".") {
       next(); expect("op", "."); const m = expect("id").value;
@@ -218,7 +220,7 @@ function jsParse(src) {
     return { kind: "While", cond, body: block() };
   }
 
-  // for(init; cond; update) body  =>  { init; while(cond) { ...body; update; } }
+  // for(init; cond; update) body — a real For node (continue must run update)
   function forStmt() {
     expect("kw", "for"); expect("op", "(");
     const init = (at("kw", "let") || at("kw", "const") || at("kw", "var")) ? letNoSemi() : simpleStmt(false);
@@ -227,7 +229,7 @@ function jsParse(src) {
     const upd = simpleStmt(false);
     expect("op", ")");
     const body = block();
-    return { kind: "Block", stmts: [init, { kind: "While", cond, body: { kind: "Block", stmts: [...body.stmts, upd] } }] };
+    return { kind: "For", init, cond, post: upd, body };
   }
 
   function letNoSemi() {
@@ -235,8 +237,18 @@ function jsParse(src) {
     return { kind: "Let", name, type: null, expr: expr() };
   }
 
-  // expressions (low -> high precedence)
-  function expr() { return orExpr(); }
+  // expressions (low -> high precedence); ?: above ||, right-assoc
+  function expr() {
+    const c = orExpr();
+    if (isOp("?")) {
+      next();
+      const t = expr();
+      expect("op", ":");
+      const f = expr();
+      return { kind: "Cond", c, t, f };
+    }
+    return c;
+  }
   function binLevel(sub, ops, map) {
     return () => {
       let left = sub();
@@ -266,6 +278,14 @@ function jsParse(src) {
       if (isOp("[")) { next(); const idx = expr(); expect("op", "]"); e = { kind: "Index", arr: e, idx }; }
       else if (isOp(".")) {
         next(); const m = expect("id").value;
+        if (isOp("(")) { // method call — only a small set is supported
+          next(); const args = [];
+          if (!isOp(")")) do { args.push(expr()); } while (eatOp(","));
+          expect("op", ")");
+          if (m === "substring" && args.length === 2) { e = { kind: "Substr", s: e, start: args[0], end: args[1] }; continue; }
+          if (m === "trunc" && e.kind === "Var" && e.name === "Math" && args.length === 1) { e = { kind: "Cast", to: "int", e: args[0] }; continue; }
+          throw new TranspileError(`unsupported method .${m}()`);
+        }
         e = m === "length" ? { kind: "Len", arr: e } : { kind: "Field", obj: e, name: m };
       }
       else break;

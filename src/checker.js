@@ -65,7 +65,7 @@ function checkFunc(func, sigs, structs) {
   if (!validType(func.ret, structs)) throw new TranspileError(`bad return type '${func.ret}' for '${func.name}'`);
   const scopes = [new Map()];
   for (const p of func.params) scopes[0].set(p.name, p.type);
-  checkBlock(func.body, { sigs, scopes, ret: func.ret, structs });
+  checkBlock(func.body, { sigs, scopes, ret: func.ret, structs, loops: 0 });
 }
 
 function checkBlock(block, ctx) {
@@ -125,7 +125,26 @@ function checkStmt(s, ctx) {
       break;
     case "While":
       requireBool(infer(s.cond, ctx), "while");
+      ctx.loops++;
       checkBlock(s.body, ctx);
+      ctx.loops--;
+      break;
+    case "For": {
+      ctx.scopes.push(new Map()); // the init variable scopes over cond/body/post
+      checkStmt(s.init, ctx);
+      requireBool(infer(s.cond, ctx), "for");
+      ctx.loops++;
+      checkBlock(s.body, ctx);
+      ctx.loops--;
+      checkStmt(s.post, ctx);
+      ctx.scopes.pop();
+      break;
+    }
+    case "Break":
+      if (ctx.loops === 0) throw new TranspileError("break outside of a loop");
+      break;
+    case "Continue":
+      if (ctx.loops === 0) throw new TranspileError("continue outside of a loop");
       break;
     case "Block":
       checkBlock(s, ctx);
@@ -252,9 +271,22 @@ function inferRaw(e, ctx) {
       if (infer(e.idx, ctx) !== "int") throw new TranspileError(`array index must be int`);
       return arrT.slice(0, -2);
     }
-    case "Len":
-      if (!infer(e.arr, ctx).endsWith("[]")) throw new TranspileError(`len() needs an array`);
+    case "Len": {
+      const t = infer(e.arr, ctx);
+      if (!t.endsWith("[]") && t !== "string") throw new TranspileError(`len() needs an array or a string`);
       return "int";
+    }
+    case "Substr": {
+      if (infer(e.s, ctx) !== "string") throw new TranspileError(`substr() needs a string`);
+      if (infer(e.start, ctx) !== "int" || infer(e.end, ctx) !== "int")
+        throw new TranspileError(`substr() bounds must be int`);
+      return "string";
+    }
+    case "Cast": {
+      const t = infer(e.e, ctx);
+      if (!NUMERIC.has(t)) throw new TranspileError(`cannot cast ${t} to ${e.to}`);
+      return e.to;
+    }
     case "Field": {
       const ot = infer(e.obj, ctx);
       const fields = ctx.structs.get(ot);
@@ -262,6 +294,13 @@ function inferRaw(e, ctx) {
       const fld = fields.find((f) => f.name === e.name);
       if (!fld) throw new TranspileError(`struct '${ot}' has no field '${e.name}'`);
       return fld.type;
+    }
+    case "Cond": {
+      requireBool(infer(e.c, ctx), "conditional");
+      const tt = infer(e.t, ctx), ft = infer(e.f, ctx);
+      if (tt !== ft) throw new TranspileError(`conditional branches must match, got ${tt} and ${ft}`);
+      if (tt === "void" || ctx.structs.has(tt)) throw new TranspileError(`conditional cannot produce ${tt}`);
+      return tt;
     }
     default:
       throw new TranspileError(`unknown expression '${e.kind}'`);

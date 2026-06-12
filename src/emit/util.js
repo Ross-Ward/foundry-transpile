@@ -35,11 +35,20 @@ function usesIntDiv(program) {
   return found;
 }
 
-// True if any ==/!= compares strings (C needs strcmp — `==` on const char*
-// compares pointers).
+// True if any comparison operator is applied to strings (C needs strcmp —
+// comparing const char* compares pointers).
 function usesStringEq(program) {
+  const CMP = new Set(["==", "!=", "<", ">", "<=", ">="]);
   let found = false;
-  walk(program, (n) => { if (n.kind === "Bin" && (n.op === "==" || n.op === "!=") && n.l.type === "string") found = true; });
+  walk(program, (n) => { if (n.kind === "Bin" && CMP.has(n.op) && n.l.type === "string") found = true; });
+  return found;
+}
+
+// True if any % is integer modulo (Python's % and Lua's % are floor-mod;
+// every other target truncates, so they need a helper for negative operands).
+function usesIntMod(program) {
+  let found = false;
+  walk(program, (n) => { if (n.kind === "Bin" && n.op === "%" && n.type === "int") found = true; });
   return found;
 }
 
@@ -51,4 +60,36 @@ function usesArray(program) {
   return found;
 }
 
-module.exports = { walk, usesFloatPrint, usesStringConcat, usesIntDiv, usesArray, usesStringEq };
+// Rename identifiers that collide with a target's reserved words or runtime
+// names (name -> name_, repeated until free). `main` is never renamed — every
+// backend maps it specially. Struct renames are mirrored into all type
+// annotations. Mutates the program (each transpile() call parses fresh IR).
+function renameReserved(program, reserved) {
+  const fix = (n) => {
+    if (n === "main") return n;
+    let r = n;
+    while (reserved.has(r)) r += "_";
+    return r;
+  };
+  const structMap = new Map();
+  for (const st of program.structs || []) {
+    const f = fix(st.name);
+    if (f !== st.name) structMap.set(st.name, f);
+  }
+  const remapT = (t) => {
+    if (typeof t !== "string") return t;
+    if (t.endsWith("[]")) { const b = t.slice(0, -2); return structMap.has(b) ? structMap.get(b) + "[]" : t; }
+    return structMap.get(t) || t;
+  };
+  walk(program, (node) => {
+    if (typeof node.name === "string" && node.kind) node.name = fix(node.name);
+    if (typeof node.type === "string") node.type = remapT(node.type);
+    if (typeof node.ret === "string") node.ret = remapT(node.ret);
+    if (Array.isArray(node.params)) for (const p of node.params) { p.name = fix(p.name); p.type = remapT(p.type); }
+    if (Array.isArray(node.fields)) for (const f of node.fields) { f.name = fix(f.name); f.type = remapT(f.type); }
+    if (Array.isArray(node.fieldNames)) node.fieldNames = node.fieldNames.map(fix);
+  });
+  return program;
+}
+
+module.exports = { walk, usesFloatPrint, usesStringConcat, usesIntDiv, usesIntMod, usesArray, usesStringEq, renameReserved };

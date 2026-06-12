@@ -3,7 +3,13 @@
 // user's `main()` (C# is case-sensitive, so the two never collide). String == is
 // value equality in C#, so no special-casing. Integer division truncates.
 
-const { usesFloatPrint } = require("./util");
+const { usesFloatPrint, renameReserved } = require("./util");
+
+const RESERVED = new Set(("abstract as base bool break byte case catch char checked class const continue decimal " +
+  "default delegate do double else enum event explicit extern false finally fixed float for foreach goto if implicit " +
+  "in int interface internal is lock long namespace new null object operator out override params private protected " +
+  "public readonly ref return sbyte sealed short sizeof stackalloc static string struct switch this throw true try " +
+  "typeof uint ulong unchecked unsafe ushort using virtual void volatile while Program Console Main value var").split(" "));
 
 const CS = { int: "int", float: "double", bool: "bool", string: "string", void: "void", "int[]": "int[]", "float[]": "double[]", "string[]": "string[]" };
 const T = (t) => CS[t] || t; // struct -> its class name (class, for reference semantics)
@@ -14,6 +20,7 @@ const FLOAT_HELPER =
   '        return s.EndsWith(".") ? s + "0" : s;\n    }\n';
 
 function emitCSharp(program) {
+  renameReserved(program, RESERVED);
   const structs = (program.structs || []).map(emitStruct).join("\n");
   const body = program.funcs.map(emitFunc).join("\n");
   const helper = usesFloatPrint(program) ? FLOAT_HELPER : "";
@@ -51,6 +58,9 @@ function emitStmt(s, d) {
     case "Return": return `${pad}return${s.expr ? " " + E(s.expr) : ""};`;
     case "ExprStmt": return `${pad}${E(s.expr)};`;
     case "While": return `${pad}while (${E(s.cond)}) {\n${emitBlock(s.body, d + 1)}${pad}}`;
+    case "For": return `${pad}for (${emitStmt(s.init, 0).replace(/;$/, "")}; ${E(s.cond)}; ${emitStmt(s.post, 0).replace(/;$/, "")}) {\n${emitBlock(s.body, d + 1)}${pad}}`;
+    case "Break": return `${pad}break;`;
+    case "Continue": return `${pad}continue;`;
     case "If": {
       let out = `${pad}if (${E(s.cond)}) {\n${emitBlock(s.then, d + 1)}${pad}}`;
       if (s.els) out += ` else {\n${emitBlock(s.els, d + 1)}${pad}}`;
@@ -75,6 +85,9 @@ function E(e) {
         const s = (n) => (n.type === "bool" ? `(${E(n)} ? "true" : "false")` : E(n));
         return `(${s(e.l)} + ${s(e.r)})`;
       }
+      // C# has no < on strings; use ordinal comparison
+      if (["<", ">", "<=", ">="].includes(e.op) && e.l.type === "string")
+        return `(string.CompareOrdinal(${E(e.l)}, ${E(e.r)}) ${e.op} 0)`;
       return `(${E(e.l)} ${e.op} ${E(e.r)})`;
     }
     case "Array": return `new ${T(e.type.slice(0, -2))}[]{${e.elems.map(E).join(", ")}}`;
@@ -83,6 +96,9 @@ function E(e) {
     case "Len": return `${E(e.arr)}.Length`;
     case "StructLit": return `new ${e.name}(${e.args.map(E).join(", ")})`;
     case "Field": return `${E(e.obj)}.${e.name}`;
+    case "Cond": return `(${E(e.c)} ? ${E(e.t)} : ${E(e.f)})`;
+    case "Substr": return `${E(e.s)}.Substring(${E(e.start)}, (${E(e.end)}) - (${E(e.start)}))`;
+    case "Cast": return e.to === "int" ? `(int)(${E(e.e)})` : `(double)(${E(e.e)})`;
     default: throw new Error(`csharp: unknown expr ${e.kind}`);
   }
 }

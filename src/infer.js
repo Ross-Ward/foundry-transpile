@@ -76,6 +76,13 @@ function inferStmt(s, env, funcs, retTypes, finalize) {
     case "While":
       inferBlock(s.body, new Map(env), funcs, retTypes, finalize);
       break;
+    case "For": {
+      const inner = new Map(env);
+      inferStmt(s.init, inner, funcs, retTypes, finalize);
+      inferBlock(s.body, inner, funcs, retTypes, finalize);
+      inferStmt(s.post, inner, funcs, retTypes, finalize);
+      break;
+    }
     case "Block":
       inferBlock(s, new Map(env), funcs, retTypes, finalize);
       break;
@@ -125,8 +132,9 @@ function refineCallArgs(s, env, funcs) {
         const at = typeOf(a, env, funcs);
         if (at && at.endsWith("[]") && (p.type == null || p.type.endsWith("[]"))) p.type = at;
         // a string or struct argument is stronger evidence than a usage-based
-        // int guess (e.g. `x + tag` looks numeric until a call site disagrees)
-        else if (at && (at === "string" || STRUCTS.has(at)) && (p.type == null || p.type === "int")) p.type = at;
+        // guess (e.g. `x + tag` looks numeric, and `len(s)` looks like an
+        // array, until a call site disagrees)
+        else if (at && (at === "string" || STRUCTS.has(at)) && (p.type == null || p.type === "int" || p.type === "int[]")) p.type = at;
       });
     });
   }
@@ -165,6 +173,9 @@ function typeOf(e, env, funcs) {
       return (et || "int") + "[]";
     }
     case "NewArray": return "int[]";
+    case "Cond": return typeOf(e.t, env, funcs) || typeOf(e.f, env, funcs);
+    case "Substr": return "string";
+    case "Cast": return e.to;
     case "Index": {
       const t = typeOf(e.arr, env, funcs);
       return t && t.endsWith("[]") ? t.slice(0, -2) : "int";
@@ -204,7 +215,7 @@ function scanParam(name, body) {
 
 function walkExprs(node, fn) {
   if (!node || typeof node !== "object") return;
-  if (node.kind && /^(Int|Float|Str|Bool|Var|Un|Bin|Call|Index|Len|Array|NewArray|Field)$/.test(node.kind)) fn(node);
+  if (node.kind && /^(Int|Float|Str|Bool|Var|Un|Bin|Call|Index|Len|Array|NewArray|Field|Cond|Substr|Cast)$/.test(node.kind)) fn(node);
   for (const k of Object.keys(node)) {
     const v = node[k];
     if (Array.isArray(v)) v.forEach((x) => walkExprs(x, fn));

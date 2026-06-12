@@ -9,10 +9,10 @@
 const { TranspileError } = require("../lexer");
 
 const TYPE_MAP = { int: "int", float: "float", number: "int", bool: "bool", boolean: "bool", string: "string", void: "void" };
-const KEYWORDS = new Set(["function", "let", "const", "var", "return", "if", "else", "while", "for", "true", "false", "class", "new", "public"]);
+const KEYWORDS = new Set(["function", "let", "const", "var", "return", "if", "else", "while", "for", "true", "false", "class", "new", "public", "break", "continue"]);
 const OPS = [
   "===", "!==", "==", "!=", "<=", ">=", "+=", "-=", "*=", "/=", "&&", "||", "++", "--",
-  "+", "-", "*", "/", "%", "=", "<", ">", "!", "(", ")", "{", "}", "[", "]", ",", ";", ":", ".",
+  "+", "-", "*", "/", "%", "=", "<", ">", "!", "(", ")", "{", "}", "[", "]", ",", ";", ":", ".", "?",
 ];
 
 function tokenize(src) {
@@ -145,6 +145,8 @@ function tsParse(src) {
     if (at("kw", "if")) return ifStmt();
     if (at("kw", "while")) return whileStmt();
     if (at("kw", "for")) return forStmt();
+    if (at("kw", "break")) { next(); expect("op", ";"); return { kind: "Break" }; }
+    if (at("kw", "continue")) { next(); expect("op", ";"); return { kind: "Continue" }; }
     if (at("id", "console") && toks[p + 1].kind === "op" && toks[p + 1].value === ".") {
       next(); expect("op", "."); const m = expect("id").value;
       if (m !== "log") throw new TranspileError(`only console.log is supported, not console.${m}`);
@@ -228,10 +230,20 @@ function tsParse(src) {
     const upd = simpleStmt(false);
     expect("op", ")");
     const body = block();
-    return { kind: "Block", stmts: [init, { kind: "While", cond, body: { kind: "Block", stmts: [...body.stmts, upd] } }] };
+    return { kind: "For", init, cond, post: upd, body };
   }
 
-  function expr() { return orExpr(); }
+  function expr() {
+    const c = orExpr();
+    if (isOp("?")) { // ?: above ||, right-assoc
+      next();
+      const t = expr();
+      expect("op", ":");
+      const f = expr();
+      return { kind: "Cond", c, t, f };
+    }
+    return c;
+  }
   function binLevel(sub, ops, map) {
     return () => {
       let left = sub();
@@ -255,6 +267,14 @@ function tsParse(src) {
       if (isOp("[")) { next(); const idx = expr(); expect("op", "]"); e = { kind: "Index", arr: e, idx }; }
       else if (isOp(".")) {
         next(); const m = expect("id").value;
+        if (isOp("(")) { // method call — only a small set is supported
+          next(); const args = [];
+          if (!isOp(")")) do { args.push(expr()); } while (eatOp(","));
+          expect("op", ")");
+          if (m === "substring" && args.length === 2) { e = { kind: "Substr", s: e, start: args[0], end: args[1] }; continue; }
+          if (m === "trunc" && e.kind === "Var" && e.name === "Math" && args.length === 1) { e = { kind: "Cast", to: "int", e: args[0] }; continue; }
+          throw new TranspileError(`unsupported method .${m}()`);
+        }
         e = m === "length" ? { kind: "Len", arr: e } : { kind: "Field", obj: e, name: m };
       }
       else break;
@@ -281,7 +301,11 @@ function tsParse(src) {
     if (isOp("[")) { next(); const elems = []; if (!isOp("]")) do { elems.push(expr()); } while (eatOp(",")); expect("op", "]"); return { kind: "Array", elems }; }
     if (c.kind === "id") {
       next();
-      if (isOp("(")) { next(); const args = []; if (!isOp(")")) do { args.push(expr()); } while (eatOp(",")); expect("op", ")"); return { kind: "Call", name: c.value, args }; }
+      if (isOp("(")) {
+        next(); const args = []; if (!isOp(")")) do { args.push(expr()); } while (eatOp(",")); expect("op", ")");
+        if ((c.value === "int" || c.value === "float") && args.length === 1) return { kind: "Cast", to: c.value, e: args[0] };
+        return { kind: "Call", name: c.value, args };
+      }
       return { kind: "Var", name: c.value };
     }
     throw new TranspileError(`unexpected '${c.value ?? c.kind}'`, c.line, c.col);
@@ -306,6 +330,11 @@ function fillBlock(block, env, funcs, structs) {
     if (s.kind === "Let") { if (!s.type) s.type = typeOf(s.expr, env, funcs, structs); env.set(s.name, s.type); }
     else if (s.kind === "If") { fillBlock(s.then, new Map(env), funcs, structs); if (s.els) fillBlock(s.els, new Map(env), funcs, structs); }
     else if (s.kind === "While") fillBlock(s.body, new Map(env), funcs, structs);
+    else if (s.kind === "For") {
+      const inner = new Map(env);
+      fillBlock({ kind: "Block", stmts: [s.init] }, inner, funcs, structs);
+      fillBlock(s.body, inner, funcs, structs);
+    }
     else if (s.kind === "Block") fillBlock(s, new Map(env), funcs, structs);
   }
 }
@@ -326,6 +355,9 @@ function typeOf(e, env, funcs, structs) {
       const fl = st && st.fields.find((f) => f.name === e.name);
       return fl ? fl.type : "int";
     }
+    case "Cond": return typeOf(e.t, env, funcs, structs);
+    case "Substr": return "string";
+    case "Cast": return e.to;
     case "Bin": {
       const op = e.op;
       if (["<", ">", "<=", ">=", "==", "!=", "&&", "||"].includes(op)) return "bool";

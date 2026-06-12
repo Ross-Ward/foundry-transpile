@@ -11,10 +11,10 @@
 // and the `sizeof(a) / sizeof(a[0])` length idiom (-> Len).
 const { TranspileError } = require("../lexer");
 
-const KEYWORDS = new Set(["int", "double", "bool", "char", "void", "const", "if", "else", "while", "for", "return", "true", "false", "struct"]);
+const KEYWORDS = new Set(["int", "double", "bool", "char", "void", "const", "if", "else", "while", "for", "return", "true", "false", "struct", "break", "continue"]);
 const OPS = [
   "==", "!=", "<=", ">=", "+=", "-=", "*=", "/=", "&&", "||", "++", "--", "->",
-  "+", "-", "*", "/", "%", "=", "<", ">", "!", "&", "(", ")", "{", "}", "[", "]", ",", ";", ".",
+  "+", "-", "*", "/", "%", "=", "<", ">", "!", "&", "(", ")", "{", "}", "[", "]", ",", ";", ".", "?", ":",
 ];
 
 function tokenize(src) {
@@ -165,6 +165,8 @@ function cParse(src) {
     if (at("kw", "if")) return ifStmt();
     if (at("kw", "while")) return whileStmt();
     if (at("kw", "for")) return forStmt();
+    if (at("kw", "break")) { next(); expect("op", ";"); return { kind: "Break" }; }
+    if (at("kw", "continue")) { next(); expect("op", ";"); return { kind: "Continue" }; }
     if (at("id", "printf")) return printfStmt();
     return simpleStmt(true);
   }
@@ -285,7 +287,7 @@ function cParse(src) {
     const upd = simpleStmt(false);
     expect("op", ")");
     const body = blockOrStmt();
-    return { kind: "Block", stmts: [init, { kind: "While", cond, body: { kind: "Block", stmts: [...body.stmts, upd] } }] };
+    return { kind: "For", init, cond, post: upd, body };
   }
 
   // printf("fmt", args...) -> Print of (literals + values) concatenated
@@ -321,7 +323,17 @@ function cParse(src) {
     return parts.reduce((l, r) => ({ kind: "Bin", op: "+", l, r }));
   }
 
-  function expr() { return orExpr(); }
+  function expr() {
+    const c = orExpr();
+    if (isOp("?")) { // ?: above ||, right-assoc
+      next();
+      const t = expr();
+      expect("op", ":");
+      const f = expr();
+      return { kind: "Cond", c, t, f };
+    }
+    return c;
+  }
   function binLevel(sub, ops) {
     return () => {
       let left = sub();
@@ -338,6 +350,14 @@ function cParse(src) {
   function unary() {
     if (isOp("-") || isOp("!")) { const op = next().value; return { kind: "Un", op, e: unary() }; }
     if (isOp("&")) { next(); return unary(); } // &v — address-of is identity in the IR's reference model
+    // numeric casts: (int)x / (double)x
+    if (isOp("(") && toks[p + 1].kind === "kw" && (toks[p + 1].value === "int" || toks[p + 1].value === "double")
+        && toks[p + 2] && toks[p + 2].kind === "op" && toks[p + 2].value === ")") {
+      next();
+      const to = next().value === "double" ? "float" : "int";
+      next();
+      return { kind: "Cast", to, e: unary() };
+    }
     return primary();
   }
   function primary() {

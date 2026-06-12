@@ -1,6 +1,6 @@
 name: CI
 on:
-  push: { branches: [main] }
+  push: { branches: [master, main] }
   pull_request:
   workflow_dispatch:
 
@@ -10,7 +10,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: { node-version: '20' }
+        with: { node-version: '22' }
       - uses: actions/setup-go@v5
         with: { go-version: '1.26' }
       - uses: mlugg/setup-zig@v1
@@ -19,7 +19,16 @@ jobs:
         with: { distribution: temurin, java-version: '21' }
       - uses: actions/setup-dotnet@v4
         with: { dotnet-version: '9.0.x' }
+      - name: Install Lua 5.4
+        run: sudo apt-get update && sudo apt-get install -y lua5.4
+      - name: Install Kotlin compiler
+        run: |
+          curl -sSLo /tmp/kotlin.zip https://github.com/JetBrains/kotlin/releases/download/v2.4.0/kotlin-compiler-2.4.0.zip
+          unzip -q /tmp/kotlin.zip -d "$HOME"
+          echo "$HOME/kotlinc/bin" >> "$GITHUB_PATH"
       - name: Rust + Python are preinstalled on the runner
         run: rustc --version && python3 --version
-      - name: Transpile to all 7 targets, run each, assert identical output
-        run: TRANSPILE_PYTHON=python3 node test/run.js
+      - name: Transpile to all 9 targets, run each, assert identical output
+        run: TRANSPILE_PYTHON=python3 TRANSPILE_LUA=lua5.4 node test/run.js
+      - name: Fuzz (15 random programs across all 9 targets)
+        run: TRANSPILE_PYTHON=python3 TRANSPILE_LUA=lua5.4 node test/fuzz.js 1 15

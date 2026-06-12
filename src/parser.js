@@ -98,6 +98,8 @@ function parse(src) {
     if (at("kw", "for")) return parseFor();
     if (at("kw", "return")) return parseReturn();
     if (at("kw", "print")) return parsePrint();
+    if (at("kw", "break")) { next(); expect("op", ";"); return { kind: "Break" }; }
+    if (at("kw", "continue")) { next(); expect("op", ";"); return { kind: "Continue" }; }
 
     // assignment (to a variable or an array element) or a bare expression
     const lhs = parseExpr();
@@ -147,7 +149,8 @@ function parse(src) {
     return { kind: "While", cond, body: parseBlock() };
   }
 
-  // for(init; cond; post) body  =>  { init; while(cond) { ...body; post; } }
+  // for(init; cond; post) body — a real For node, so backends can emit native
+  // loops and `continue` still runs the post step.
   function parseFor() {
     expect("kw", "for");
     expect("op", "(");
@@ -158,10 +161,7 @@ function parse(src) {
     const post = parseAssignNoSemi();
     expect("op", ")");
     const body = parseBlock();
-    return {
-      kind: "Block",
-      stmts: [init, { kind: "While", cond, body: { kind: "Block", stmts: [...body.stmts, post] } }],
-    };
+    return { kind: "For", init, cond, post, body };
   }
 
   function parseLetNoSemi() {
@@ -195,8 +195,18 @@ function parse(src) {
     return { kind: "Print", expr };
   }
 
-  // expression precedence (low -> high)
-  function parseExpr() { return parseOr(); }
+  // expression precedence (low -> high); ?: sits above || and is right-assoc
+  function parseExpr() {
+    const c = parseOr();
+    if (isOp("?")) {
+      next();
+      const t = parseExpr();
+      expect("op", ":");
+      const f = parseExpr();
+      return { kind: "Cond", c, t, f };
+    }
+    return c;
+  }
   function bin(sub, ops) {
     return () => {
       let left = sub();
@@ -245,6 +255,14 @@ function parse(src) {
     if (c.kind === "str") { next(); return { kind: "Str", value: c.value }; }
     if (at("kw", "true")) { next(); return { kind: "Bool", value: true }; }
     if (at("kw", "false")) { next(); return { kind: "Bool", value: false }; }
+    // numeric casts: int(x) / float(x)
+    if ((at("kw", "int") || at("kw", "float")) && toks[p + 1].kind === "op" && toks[p + 1].value === "(") {
+      const to = next().value;
+      next();
+      const inner = parseExpr();
+      expect("op", ")");
+      return { kind: "Cast", to, e: inner };
+    }
     if (isOp("(")) { next(); const e = parseExpr(); expect("op", ")"); return e; }
     if (isOp("[")) { // array literal: [e1, e2, ...]
       next();
@@ -262,6 +280,7 @@ function parse(src) {
         expect("op", ")");
         if (c.value === "len" && args.length === 1) return { kind: "Len", arr: args[0] };
         if (c.value === "array" && args.length === 1) return { kind: "NewArray", size: args[0] };
+        if (c.value === "substr" && args.length === 3) return { kind: "Substr", s: args[0], start: args[1], end: args[2] }; // end-exclusive
         return { kind: "Call", name: c.value, args };
       }
       return { kind: "Var", name: c.value };

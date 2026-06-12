@@ -7,7 +7,7 @@
   "type": "commonjs",
   "main": "src/index.js",
   "bin": { "transpile": "bin/transpile.js" },
-  "scripts": { "test": "node test/run.js" },
+  "scripts": { "test": "node test/run.js", "fuzz": "node test/fuzz.js" },
   "files": ["src", "bin", "examples"],
   "engines": { "node": ">=18" }
 }

@@ -2,7 +2,11 @@
 // C backend. Static types come straight from the checker's annotations.
 // Integer division needs no special-casing: int/int already truncates in C.
 
-const { walk, usesFloatPrint, usesStringConcat, usesArray, usesStringEq } = require("./util");
+const { walk, usesFloatPrint, usesStringConcat, usesArray, usesStringEq, renameReserved } = require("./util");
+
+const RESERVED = new Set(("auto break case char const continue default do double else enum extern float for goto if " +
+  "inline int long register restrict return short signed sizeof static struct switch typedef union unsigned void " +
+  "volatile bool true false printf strlen strcmp malloc calloc free").split(" "));
 
 const CT = { int: "int", float: "double", bool: "bool", string: "const char*", void: "void", "int[]": "IntSlice", "float[]": "FloatSlice", "string[]": "StrSlice" };
 // structs are malloc'd pointers (reference semantics); Point[] is a PointSlice
@@ -79,11 +83,33 @@ const RUNTIME = [
   "static const char *__concat(const char *a, const char *b) { char *r = __buf(); snprintf(r, 512, \"%s%s\", a, b); return r; }",
 ].join("\n");
 
+// substr is end-exclusive, like the IR; the copy is malloc'd (never freed,
+// same stance as everything else here)
+const SUBSTR_HELPER = [
+  "#include <stdlib.h>",
+  "#include <string.h>",
+  "",
+  "static const char *__substr(const char *s, int a, int b) {",
+  "    int n = (int)strlen(s);",
+  "    if (a < 0) a = 0; if (b > n) b = n; if (b < a) b = a;",
+  "    char *r = (char *)malloc((size_t)(b - a) + 1);",
+  "    memcpy(r, s + a, (size_t)(b - a)); r[b - a] = 0;",
+  "    return r;",
+  "}",
+].join("\n");
+
 function emitC(program) {
+  renameReserved(program, RESERVED);
   const structs = program.structs || [];
   CSTRUCTS = new Set(structs.map((st) => st.name));
+  let usesStrLen = false, usesSubstr = false;
+  walk(program, (n) => {
+    if (n.kind === "Len" && n.arr && n.arr.type === "string") usesStrLen = true;
+    if (n.kind === "Substr") usesSubstr = true;
+  });
   const out = ["#include <stdio.h>", "#include <stdbool.h>"];
-  if (usesStringEq(program)) out.push("#include <string.h>"); // strcmp
+  if (usesStringEq(program) || usesStrLen) out.push("#include <string.h>"); // strcmp / strlen
+  if (usesSubstr) out.push(SUBSTR_HELPER);
   if (usesFloatPrint(program) || usesStringConcat(program)) out.push(RUNTIME);
   if (usesArray(program) || structs.length) out.push(DUP_HELPER);
   if (usesArray(program)) out.push(ARRAY_RUNTIME);
@@ -181,6 +207,9 @@ function emitStmt(s, d) {
     case "Return": return `${pad}return${s.expr ? " " + E(s.expr) : ""};`;
     case "ExprStmt": return `${pad}${E(s.expr)};`;
     case "While": return `${pad}while (${E(s.cond)}) {\n${emitBlock(s.body, d + 1)}${pad}}`;
+    case "For": return `${pad}for (${emitStmt(s.init, 0).replace(/;$/, "")}; ${E(s.cond)}; ${emitStmt(s.post, 0).replace(/;$/, "")}) {\n${emitBlock(s.body, d + 1)}${pad}}`;
+    case "Break": return `${pad}break;`;
+    case "Continue": return `${pad}continue;`;
     case "If": {
       let out = `${pad}if (${E(s.cond)}) {\n${emitBlock(s.then, d + 1)}${pad}}`;
       if (s.els) out += ` else {\n${emitBlock(s.els, d + 1)}${pad}}`;
@@ -218,7 +247,7 @@ function E(e) {
     case "Call": return `${e.name}(${e.args.map(E).join(", ")})`;
     case "Bin":
       if (e.op === "+" && e.type === "string") return `__concat(${asStr(e.l)}, ${asStr(e.r)})`;
-      if ((e.op === "==" || e.op === "!=") && e.l.type === "string")
+      if (["==", "!=", "<", ">", "<=", ">="].includes(e.op) && e.l.type === "string")
         return `(strcmp(${E(e.l)}, ${E(e.r)}) ${e.op} 0)`;
       return `(${E(e.l)} ${e.op} ${E(e.r)})`;
     case "Array": {
@@ -228,9 +257,12 @@ function E(e) {
     }
     case "NewArray": return `__newarr(${E(e.size)})`;
     case "Index": return `${E(e.arr)}.data[${E(e.idx)}]`;
-    case "Len": return `${E(e.arr)}.len`;
+    case "Len": return e.arr.type === "string" ? `(int)strlen(${E(e.arr)})` : `${E(e.arr)}.len`;
     case "StructLit": return `__new_${e.name}(${e.args.map(E).join(", ")})`;
     case "Field": return `${E(e.obj)}->${e.name}`;
+    case "Cond": return `(${E(e.c)} ? ${E(e.t)} : ${E(e.f)})`;
+    case "Substr": return `__substr(${E(e.s)}, ${E(e.start)}, ${E(e.end)})`;
+    case "Cast": return e.to === "int" ? `(int)(${E(e.e)})` : `(double)(${E(e.e)})`;
     default: throw new Error(`c: unknown expr ${e.kind}`);
   }
 }

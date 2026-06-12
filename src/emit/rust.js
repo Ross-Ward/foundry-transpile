@@ -3,7 +3,11 @@
 // that is later reassigned, so we pre-scan each function for mutated names. The
 // user's `main` becomes Rust's `fn main`. Integer division truncates natively.
 
-const { usesFloatPrint } = require("./util");
+const { usesFloatPrint, renameReserved } = require("./util");
+
+const RESERVED = new Set(("as break const continue crate dyn else enum extern false fn for if impl in let loop match " +
+  "mod move mut pub ref return self Self static struct super trait true type unsafe use where while async await " +
+  "abstract become box do final macro override priv typeof unsized virtual yield try gen String Vec vec").split(" "));
 
 // string -> String (owned) so concatenation via format! type-checks; literals
 // become "...".to_string().
@@ -22,6 +26,7 @@ const FLOAT_HELPER =
   "    if s.ends_with('.') { s.push('0'); }\n    s\n}";
 
 function emitRust(program) {
+  renameReserved(program, RESERVED);
   STRUCTS = new Set((program.structs || []).map((st) => st.name));
   const out = [];
   if (usesFloatPrint(program)) out.push(FLOAT_HELPER);
@@ -67,11 +72,13 @@ function collectMutated(node, set) {
   }
 }
 
-function emitBlock(block, d, mut) {
-  return block.stmts.map((s) => emitStmt(s, d, mut)).join("\n") + (block.stmts.length ? "\n" : "");
+function emitBlock(block, d, mut, loop) {
+  return block.stmts.map((s) => emitStmt(s, d, mut, loop)).join("\n") + (block.stmts.length ? "\n" : "");
 }
 
-function emitStmt(s, d, mut) {
+// `loop` carries the enclosing For's post statement (Rust has no 3-clause
+// for, so `continue` must run the post step explicitly first).
+function emitStmt(s, d, mut, loop) {
   const pad = "    ".repeat(d);
   switch (s.kind) {
     case "Let": return `${pad}let ${mut.has(s.name) ? "mut " : ""}${s.name}: ${T(s.type)} = ${E(s.expr)};`;
@@ -81,13 +88,22 @@ function emitStmt(s, d, mut) {
     case "FieldAssign": return `${pad}${E(s.obj)}.${s.name} = ${E(s.expr)};`;
     case "Return": return `${pad}return${s.expr ? " " + E(s.expr) : ""};`;
     case "ExprStmt": return `${pad}${E(s.expr)};`;
-    case "While": return `${pad}while ${E(s.cond)} {\n${emitBlock(s.body, d + 1, mut)}${pad}}`;
+    case "While": return `${pad}while ${E(s.cond)} {\n${emitBlock(s.body, d + 1, mut, null)}${pad}}`;
+    case "For":
+      return `${pad}{\n${emitStmt(s.init, d + 1, mut, null)}\n` +
+        `${pad}    while ${E(s.cond)} {\n` +
+        emitBlock(s.body, d + 2, mut, { post: s.post }) +
+        `${emitStmt(s.post, d + 2, mut, null)}\n${pad}    }\n${pad}}`;
+    case "Break": return `${pad}break;`;
+    case "Continue":
+      if (loop && loop.post) return `${emitStmt(loop.post, d, mut, null)}\n${pad}continue;`;
+      return `${pad}continue;`;
     case "If": {
-      let out = `${pad}if ${E(s.cond)} {\n${emitBlock(s.then, d + 1, mut)}${pad}}`;
-      if (s.els) out += ` else {\n${emitBlock(s.els, d + 1, mut)}${pad}}`;
+      let out = `${pad}if ${E(s.cond)} {\n${emitBlock(s.then, d + 1, mut, loop)}${pad}}`;
+      if (s.els) out += ` else {\n${emitBlock(s.els, d + 1, mut, loop)}${pad}}`;
       return out;
     }
-    case "Block": return `${pad}{\n${emitBlock(s, d + 1, mut)}${pad}}`;
+    case "Block": return `${pad}{\n${emitBlock(s, d + 1, mut, loop)}${pad}}`;
     default: throw new Error(`rust: unknown stmt ${s.kind}`);
   }
 }
@@ -100,7 +116,12 @@ function E(e) {
     case "Bool": return e.value ? "true" : "false";
     case "Var": return e.name;
     case "Un": return `(${e.op}${E(e.e)})`;
-    case "Call": return `${e.name}(${e.args.map((a) => (isRef(a.type) ? `&mut ${E(a)}` : E(a))).join(", ")})`;
+    case "Call": return `${e.name}(${e.args.map((a) => {
+      if (isRef(a.type)) return `&mut ${E(a)}`;
+      // a string variable passed by value would move; the caller may still use it
+      if (a.type === "string" && a.kind === "Var") return `${E(a)}.clone()`;
+      return E(a);
+    }).join(", ")})`;
     case "Bin":
       // string concatenation via format!, which Displays any operand type
       if (e.op === "+" && e.type === "string") return `format!("{}{}", ${E(e.l)}, ${E(e.r)})`;
@@ -112,6 +133,9 @@ function E(e) {
       return e.type === "string" ? `${ix}.clone()` : ix; // String moves out of an index
     }
     case "Len": return `(${E(e.arr)}.len() as i64)`;
+    case "Cond": return `(if ${E(e.c)} { ${E(e.t)} } else { ${E(e.f)} })`;
+    case "Substr": return `${E(e.s)}[(${E(e.start)}) as usize..(${E(e.end)}) as usize].to_string()`;
+    case "Cast": return e.to === "int" ? `((${E(e.e)}) as i64)` : `((${E(e.e)}) as f64)`; // as i64 truncates toward zero
     case "StructLit": return `${e.name} { ${e.fieldNames.map((f, i) => `${f}: ${E(e.args[i])}`).join(", ")} }`;
     case "Field": {
       const fa = `${E(e.obj)}.${e.name}`;
