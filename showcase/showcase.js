@@ -24,7 +24,7 @@ function main() {
     console.log(tag(items[i]));
   }
   console.log(__f(total(items)));
-  console.log(Math.trunc(total(items)));
+  console.log(Math.trunc(total(items)) + 0);
   console.log("=== FOUNDRY ===".substring(4, 11));
   console.log((items.length >= 3));
 }

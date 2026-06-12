@@ -990,7 +990,12 @@ function emitStmt(s, d) {
   switch (s.kind) {
     case "Let": return `${pad}let ${s.name} = ${E(s.expr)};`;
     case "Assign": return `${pad}${s.name} = ${E(s.expr)};`;
-    case "Print": return `${pad}console.log(${s.expr.type === "float" ? `__f(${E(s.expr)})` : E(s.expr)});`;
+    case "Print": {
+      if (s.expr.type === "float") return `${pad}console.log(__f(${E(s.expr)}));`;
+      // + 0 turns negative zero into 0 (JS: -6 % 6 is -0, and console.log shows it)
+      if (s.expr.type === "int") return `${pad}console.log(${E(s.expr)} + 0);`;
+      return `${pad}console.log(${E(s.expr)});`;
+    }
     case "IndexAssign": return `${pad}${E(s.arr)}[${E(s.idx)}] = ${E(s.expr)};`;
     case "FieldAssign": return `${pad}${E(s.obj)}.${s.name} = ${E(s.expr)};`;
     case "Return": return `${pad}return${s.expr ? " " + E(s.expr) : ""};`;
@@ -1697,11 +1702,11 @@ function usesArray(program) {
 // names (name -> name_, repeated until free). `main` is never renamed — every
 // backend maps it specially. Struct renames are mirrored into all type
 // annotations. Mutates the program (each transpile() call parses fresh IR).
-function renameReserved(program, reserved) {
+function renameReserved(program, reserved, mangle = (n) => n + "_") {
   const fix = (n) => {
     if (n === "main") return n;
     let r = n;
-    while (reserved.has(r)) r += "_";
+    while (reserved.has(r)) r = mangle(r);
     return r;
   };
   const structMap = new Map();
@@ -1742,10 +1747,14 @@ __mods["src/emit/zig.js"] = function (module, exports, require) {
 
 const { walk, renameReserved } = require("./util");
 
-const RESERVED = new Set(("addrspace align allowzero and anyframe anytype asm async await break callconv catch comptime " +
+const RESERVED_WORDS = new Set(("addrspace align allowzero and anyframe anytype asm async await break callconv catch comptime " +
   "const continue defer else enum errdefer error export extern fn for if inline noalias noinline nosuspend opaque or " +
   "orelse packed pub resume return linksection struct suspend switch test threadlocal try union unreachable usingnamespace " +
-  "var volatile while bool true false null undefined void type i64 f64 u8 usize std io").split(" "));
+  "var volatile while bool true false null undefined void type usize isize std io").split(" "));
+// every iN/uN (i0, u7, i64, …) and fN is a primitive TYPE name in zig — an
+// identifier like `i0` is a compile error, and even `i0_` is rejected as a
+// malformed primitive, so these are escaped by PREFIX (v_i0), not suffix
+const RESERVED = { has: (n) => RESERVED_WORDS.has(n) || /^[iu]\d[\d_]*$/.test(n) || /^f(16|32|64|80|128)$/.test(n) };
 
 const ZT = { int: "i64", float: "f64", bool: "bool", string: "[]const u8", void: "void" };
 const T = (t) => ZT[t] ?? (t.endsWith("[]") ? `[]${T(t.slice(0, -2))}` : `*${t}`);
@@ -1792,7 +1801,7 @@ fn __zeros(n: i64) []i64 {
 }`;
 
 function emitZig(program) {
-  renameReserved(program, RESERVED);
+  renameReserved(program, RESERVED, (n) => "v_" + n);
   const out = [PRELUDE];
   for (const st of program.structs || []) {
     out.push(`const ${st.name} = struct { ${st.fields.map((f) => `${f.name}: ${T(f.type)}`).join(", ")} };`);
