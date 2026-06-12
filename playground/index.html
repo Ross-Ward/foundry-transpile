@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>foundry-transpile — playground</title>
+<style>
+  :root {
+    --bg: #14161a; --panel: #1b1e24; --edge: #2a2e36; --text: #d7dae0;
+    --dim: #8a8f99; --accent: #f0a830; --good: #62c073; --bad: #e0686f;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.45 ui-monospace, "Cascadia Code", Consolas, monospace; height: 100vh;
+         display: flex; flex-direction: column; }
+  header { display: flex; gap: 10px; align-items: center; padding: 10px 14px;
+           background: var(--panel); border-bottom: 1px solid var(--edge); flex-wrap: wrap; }
+  header h1 { font-size: 15px; margin: 0 12px 0 0; color: var(--accent); font-weight: 600; }
+  select, button { background: var(--bg); color: var(--text); border: 1px solid var(--edge);
+                   border-radius: 6px; padding: 5px 9px; font: inherit; }
+  button { cursor: pointer; } button:hover { border-color: var(--accent); }
+  #run { color: var(--good); }
+  main { flex: 1; display: grid; grid-template-columns: 1fr 1fr; min-height: 0; }
+  .pane { display: flex; flex-direction: column; min-height: 0; }
+  .pane + .pane { border-left: 1px solid var(--edge); }
+  .pane .bar { padding: 5px 12px; color: var(--dim); font-size: 12px; background: var(--panel);
+               border-bottom: 1px solid var(--edge); display: flex; justify-content: space-between; }
+  textarea { flex: 1; background: var(--bg); color: var(--text); border: 0; resize: none;
+             padding: 12px; font: inherit; outline: none; white-space: pre; }
+  #out { flex: 1; margin: 0; padding: 12px; overflow: auto; white-space: pre; }
+  #out .kw { color: #6fb3e0; } #out .str { color: #b8cc7b; } #out .num { color: #d8a657; }
+  #out .com { color: #686f7d; font-style: italic; }
+  #out.err { color: var(--bad); }
+  #stdout { max-height: 30%; overflow: auto; margin: 0; padding: 10px 12px; border-top: 1px solid var(--edge);
+            background: var(--panel); color: var(--good); white-space: pre; display: none; }
+  footer { padding: 6px 14px; color: var(--dim); font-size: 12px; background: var(--panel);
+           border-top: 1px solid var(--edge); }
+  footer a { color: var(--accent); text-decoration: none; }
+</style>
+</head>
+<body>
+<header>
+  <h1>foundry-transpile</h1>
+  <label>example <select id="example"></select></label>
+  <label>from <select id="from"></select></label>
+  <label>to <select id="to"></select></label>
+  <button id="run" title="execute the JavaScript target in a sandboxed iframe">&#9654; run JS target</button>
+</header>
+<main>
+  <div class="pane">
+    <div class="bar"><span>source</span><span id="srclang"></span></div>
+    <textarea id="src" spellcheck="false"></textarea>
+  </div>
+  <div class="pane">
+    <div class="bar"><span>output</span><span id="status"></span></div>
+    <pre id="out"></pre>
+    <pre id="stdout"></pre>
+  </div>
+</main>
+<footer>
+  every path here is output-verified: the test suite runs each example on all targets and asserts
+  byte-identical output — <a href="https://github.com/Ross-Ward/foundry-transpile">github.com/Ross-Ward/foundry-transpile</a>
+</footer>
+
+<script src="transpile.bundle.js"></script>
+<script src="examples.js"></script>
+<script>
+(function () {
+  const T = window.FoundryTranspile;
+  const $ = (id) => document.getElementById(id);
+  const srcEl = $("src"), outEl = $("out"), fromEl = $("from"), toEl = $("to"),
+        exEl = $("example"), statusEl = $("status"), stdoutEl = $("stdout");
+
+  for (const s of T.sources) fromEl.add(new Option(s, s));
+  for (const t of T.targets) toEl.add(new Option(t, t));
+  window.FoundryExamples.forEach((e, i) => exEl.add(new Option(e.label, i)));
+
+  // a deliberately simple colorizer — good enough for every target here
+  const KW = /\b(func|function|def|let|const|var|local|fun|fn|if|elif|else|elseif|while|for|do|then|end|return|break|continue|struct|class|new|print|println|printf|console|public|static|void|int|float|double|bool|boolean|string|String|Int|Double|Boolean|true|True|false|False|nil|null|None|import|package|using|use|pub|mut|self|this|goto|in|range|make|vec)\b/g;
+  function colorize(code) {
+    const esc = code.replace(/&/g, "&amp;").replace(/</g, "&lt;");
+    return esc
+      .replace(/("(?:[^"\\]|\\.)*")/g, '<span class="str">$1</span>')
+      .replace(/(\/\/[^\n]*|#[^\n]*|--[^\n]*)/g, '<span class="com">$1</span>')
+      .replace(KW, '<span class="kw">$1</span>')
+      .replace(/\b(\d+(?:\.\d+)?)\b/g, '<span class="num">$1</span>');
+  }
+
+  let lastJS = null;
+  function update() {
+    stdoutEl.style.display = "none";
+    try {
+      const code = T.transpile(srcEl.value, { from: fromEl.value, to: toEl.value });
+      outEl.classList.remove("err");
+      outEl.innerHTML = colorize(code);
+      statusEl.textContent = code.split("\n").length - 1 + " lines";
+      try { lastJS = toEl.value === "js" ? code : T.transpile(srcEl.value, { from: fromEl.value, to: "js" }); }
+      catch (_) { lastJS = null; }
+    } catch (e) {
+      outEl.classList.add("err");
+      outEl.textContent = e.message;
+      statusEl.textContent = "error";
+      lastJS = null;
+    }
+  }
+
+  let timer = null;
+  srcEl.addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(update, 200); });
+  fromEl.addEventListener("change", update);
+  toEl.addEventListener("change", update);
+  exEl.addEventListener("change", () => {
+    const e = window.FoundryExamples[exEl.value];
+    srcEl.value = e.source;
+    fromEl.value = e.from;
+    $("srclang").textContent = e.from;
+    update();
+  });
+
+  // run the JS target in a sandboxed iframe and capture its console.log
+  $("run").addEventListener("click", () => {
+    if (!lastJS) return;
+    const frame = document.createElement("iframe");
+    frame.sandbox = "allow-scripts";
+    frame.style.display = "none";
+    const harness =
+      "<scr" + "ipt>const L=[];console.log=(...a)=>L.push(a.join(' '));" +
+      "try{" + lastJS.replace(/<\/script>/gi, "<\\/script>") + "}catch(e){L.push('error: '+e.message)}" +
+      "parent.postMessage({foundryRun:L.join('\\n')},'*');</scr" + "ipt>";
+    frame.srcdoc = harness;
+    document.body.appendChild(frame);
+    setTimeout(() => frame.remove(), 3000);
+  });
+  window.addEventListener("message", (ev) => {
+    if (ev.data && typeof ev.data.foundryRun === "string") {
+      stdoutEl.textContent = ev.data.foundryRun || "(no output)";
+      stdoutEl.style.display = "block";
+    }
+  });
+
+  exEl.value = 0;
+  exEl.dispatchEvent(new Event("change"));
+  toEl.value = "rust";
+  update();
+})();
+</script>
+</body>
+</html>

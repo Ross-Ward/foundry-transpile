@@ -91,7 +91,16 @@ function parse(src) {
     return { kind: "Block", stmts };
   }
 
-  function parseStmt() {
+  // every statement and (outermost) expression node carries its source
+  // position, so checker errors can point at the offending line
+  function stamp(t0, node) {
+    if (node && node.line == null && t0.line != null) { node.line = t0.line; node.col = t0.col; }
+    return node;
+  }
+  function parseStmt() { return stamp(cur(), parseStmtRaw()); }
+  function parseExpr() { return stamp(cur(), parseExprRaw()); }
+
+  function parseStmtRaw() {
     if (at("kw", "let")) return parseLet();
     if (at("kw", "if")) return parseIf();
     if (at("kw", "while")) return parseWhile();
@@ -196,7 +205,7 @@ function parse(src) {
   }
 
   // expression precedence (low -> high); ?: sits above || and is right-assoc
-  function parseExpr() {
+  function parseExprRaw() {
     const c = parseOr();
     if (isOp("?")) {
       next();

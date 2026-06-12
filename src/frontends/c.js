@@ -159,7 +159,14 @@ function cParse(src) {
     return { kind: "Block", stmts };
   }
 
-  function stmt() {
+  function stamp(t0, node) {
+    if (node && node.line == null && t0.line != null) { node.line = t0.line; node.col = t0.col; }
+    return node;
+  }
+  function stmt() { return stamp(cur(), stmtRaw()); }
+  function expr() { return stamp(cur(), exprRaw()); }
+
+  function stmtRaw() {
     if (isTypeStart()) return declStmt();
     if (at("kw", "return")) return returnStmt();
     if (at("kw", "if")) return ifStmt();
@@ -323,7 +330,7 @@ function cParse(src) {
     return parts.reduce((l, r) => ({ kind: "Bin", op: "+", l, r }));
   }
 
-  function expr() {
+  function exprRaw() {
     const c = orExpr();
     if (isOp("?")) { // ?: above ||, right-assoc
       next();

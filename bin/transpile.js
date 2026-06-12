@@ -21,7 +21,16 @@ function main(argv) {
   try {
     process.stdout.write(transpile(source, { from, to }));
   } catch (e) {
-    process.stderr.write(`transpile error: ${e.message}\n`);
+    if (e.name === "TranspileError" && e.line != null) {
+      // compiler-style report: location, the offending line, a caret
+      const where = `${file || "<stdin>"}:${e.line}:${e.col || 1}`;
+      const srcLine = source.split(/\r?\n/)[e.line - 1] ?? "";
+      process.stderr.write(`${where}: error: ${e.raw}\n`);
+      process.stderr.write(`  ${srcLine}\n`);
+      process.stderr.write(`  ${" ".repeat(Math.max(0, (e.col || 1) - 1))}^\n`);
+    } else {
+      process.stderr.write(`transpile error: ${e.message}\n`);
+    }
     process.exit(1);
   }
 }

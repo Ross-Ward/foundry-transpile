@@ -64,11 +64,11 @@ function usesArray(program) {
 // names (name -> name_, repeated until free). `main` is never renamed — every
 // backend maps it specially. Struct renames are mirrored into all type
 // annotations. Mutates the program (each transpile() call parses fresh IR).
-function renameReserved(program, reserved) {
+function renameReserved(program, reserved, mangle = (n) => n + "_") {
   const fix = (n) => {
     if (n === "main") return n;
     let r = n;
-    while (reserved.has(r)) r += "_";
+    while (reserved.has(r)) r = mangle(r);
     return r;
   };
   const structMap = new Map();

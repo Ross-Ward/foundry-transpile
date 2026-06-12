@@ -98,6 +98,9 @@ class TranspileError extends Error {
   constructor(message, line, col) {
     super(line ? `${message} (line ${line}:${col})` : message);
     this.name = "TranspileError";
+    this.raw = message; // message without the location suffix
+    this.line = line;
+    this.col = col;
   }
 }
 

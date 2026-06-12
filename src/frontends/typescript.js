@@ -139,7 +139,14 @@ function tsParse(src) {
     return { kind: "Block", stmts };
   }
 
-  function stmt() {
+  function stamp(t0, node) {
+    if (node && node.line == null && t0.line != null) { node.line = t0.line; node.col = t0.col; }
+    return node;
+  }
+  function stmt() { return stamp(cur(), stmtRaw()); }
+  function expr() { return stamp(cur(), exprRaw()); }
+
+  function stmtRaw() {
     if (at("kw", "let") || at("kw", "const") || at("kw", "var")) return letStmt();
     if (at("kw", "return")) return returnStmt();
     if (at("kw", "if")) return ifStmt();
@@ -233,7 +240,7 @@ function tsParse(src) {
     return { kind: "For", init, cond, post: upd, body };
   }
 
-  function expr() {
+  function exprRaw() {
     const c = orExpr();
     if (isOp("?")) { // ?: above ||, right-assoc
       next();

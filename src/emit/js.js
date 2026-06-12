@@ -34,7 +34,12 @@ function emitStmt(s, d) {
   switch (s.kind) {
     case "Let": return `${pad}let ${s.name} = ${E(s.expr)};`;
     case "Assign": return `${pad}${s.name} = ${E(s.expr)};`;
-    case "Print": return `${pad}console.log(${s.expr.type === "float" ? `__f(${E(s.expr)})` : E(s.expr)});`;
+    case "Print": {
+      if (s.expr.type === "float") return `${pad}console.log(__f(${E(s.expr)}));`;
+      // + 0 turns negative zero into 0 (JS: -6 % 6 is -0, and console.log shows it)
+      if (s.expr.type === "int") return `${pad}console.log(${E(s.expr)} + 0);`;
+      return `${pad}console.log(${E(s.expr)});`;
+    }
     case "IndexAssign": return `${pad}${E(s.arr)}[${E(s.idx)}] = ${E(s.expr)};`;
     case "FieldAssign": return `${pad}${E(s.obj)}.${s.name} = ${E(s.expr)};`;
     case "Return": return `${pad}return${s.expr ? " " + E(s.expr) : ""};`;

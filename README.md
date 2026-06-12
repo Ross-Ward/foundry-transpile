@@ -9,8 +9,8 @@
   <img alt="Dependencies" src="https://img.shields.io/badge/dependencies-0-brightgreen">
   <img alt="Node" src="https://img.shields.io/badge/node-%E2%89%A518-339933">
   <img alt="Sources" src="https://img.shields.io/badge/sources-MiniLang%20%C2%B7%20JS%20%C2%B7%20Python%20%C2%B7%20TS%20%C2%B7%20C-f7df1e">
-  <img alt="Targets" src="https://img.shields.io/badge/targets-JS%20%C2%B7%20Py%20%C2%B7%20C%20%C2%B7%20Go%20%C2%B7%20Java%20%C2%B7%20C%23%20%C2%B7%20Rust%20%C2%B7%20Lua%20%C2%B7%20Kotlin-654ff0">
-  <img alt="Tests" src="https://img.shields.io/badge/tests-406%2F406-success">
+  <img alt="Targets" src="https://img.shields.io/badge/targets-JS%20%C2%B7%20Py%20%C2%B7%20C%20%C2%B7%20Go%20%C2%B7%20Java%20%C2%B7%20C%23%20%C2%B7%20Rust%20%C2%B7%20Lua%20%C2%B7%20Kotlin%20%C2%B7%20Zig-654ff0">
+  <img alt="Tests" src="https://img.shields.io/badge/tests-463%2F463-success">
 </p>
 
 ---
@@ -23,10 +23,10 @@ Part of the **Foundry Tools** engines. The architecture is the point:
    JavaScript ─┤                                           ├─ C · Go
    Python ─────┤─▶ (infer)  (annotates every node)         ├─ Java · C#
    TypeScript ─┤                                           ├─ Rust · Lua
-   C ──────────┘                                           └─ Kotlin
+   C ──────────┘                                           └─ Kotlin · Zig
 ```
 
-**5 source languages × 9 target languages.** MiniLang/TypeScript/C carry explicit types; the JS and
+**5 source languages × 10 target languages.** MiniLang/TypeScript/C carry explicit types; the JS and
 Python frontends infer them. The C frontend even maps `printf` format strings into concatenations and
 turns `int main()` into the IR's void entry.
 
@@ -104,6 +104,33 @@ MiniLang but not in C#; `end` is fine everywhere but Lua), and the sharp edges o
 are normalized — including **`%` on negative operands** (Python and Lua floor-mod; everyone else
 truncates — both now agree with the rest).
 
+## What works from where
+
+Every cell is enforced by the test suite (each feature ships with example programs run on every
+target and byte-compared — JS/Python/C sources against the original program's own run):
+
+| feature | MiniLang | JavaScript | Python | TypeScript | C |
+|---|:-:|:-:|:-:|:-:|:-:|
+| ints / floats / bools / strings | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `int[]` `float[]` `string[]` arrays | ✓ | ✓ | ✓ | ✓ | ✓ (int/float) |
+| structs (+ nested) | ✓ | ✓ classes | ✓ classes | ✓ param-props | ✓ real structs |
+| arrays of structs | ✓ | ✓ | ✓ | ✓ | — |
+| `for` / `break` / `continue` | ✓ | ✓ | ✓ `range` | ✓ | ✓ |
+| ternary `?:` | ✓ | ✓ | ✓ `a if c else b` | ✓ | ✓ |
+| string `len` / `substr` / ordering | ✓ | ✓ `.substring` | ✓ slices | ✓ | ordering |
+| `int()` / `float()` casts | ✓ | `Math.trunc` | ✓ | ✓ | ✓ `(int)x` |
+| type inference (untyped source) | n/a | ✓ | ✓ | locals only | n/a |
+
+## Try it (playground)
+
+`node playground/build.js` bundles the transpiler (still zero dependencies — the "bundler" is a
+40-line require shim) into a static page: source on the left, any of the 9 targets on the right,
+live as you type, with a sandboxed **run** button for the JS target. Open `playground/index.html`.
+
+The [`showcase/`](showcase/) directory holds one program — structs, struct arrays, strings,
+loops, ternaries, casts — rendered to **all nine targets** by `node tools/gen-showcase.js`, so you
+can eyeball what the emitted code actually looks like in each language.
+
 ## Use it (CLI)
 
 ```bash
@@ -165,11 +192,12 @@ func main(): void {
 npm test          # node test/run.js
 ```
 
-To *run* the generated programs the harness needs `node`, `python`, `zig` (the C compiler), `go`,
-`java` (JDK 11+, single-file launch), `rustc`, `dotnet`, `lua` (5.4), and `kotlinc`. Override any
-tool's location with `TRANSPILE_PYTHON` / `TRANSPILE_ZIG` / `TRANSPILE_GO` / `TRANSPILE_JAVA` /
-`TRANSPILE_RUST` / `TRANSPILE_DOTNET` / `TRANSPILE_LUA` / `TRANSPILE_KOTLINC` (kotlinc gets its
-`JAVA_HOME` derived from the `TRANSPILE_JAVA` path, or set `TRANSPILE_JAVA_HOME`).
+To *run* the generated programs the harness needs `node`, `python`, `zig` (0.16 — both the C
+compiler and the Zig target), `go`, `java` (JDK 11+, single-file launch), `rustc`, `dotnet`,
+`lua` (5.4), and `kotlinc`. Override any tool's location with `TRANSPILE_PYTHON` /
+`TRANSPILE_ZIG` / `TRANSPILE_GO` / `TRANSPILE_JAVA` / `TRANSPILE_RUST` / `TRANSPILE_DOTNET` /
+`TRANSPILE_LUA` / `TRANSPILE_KOTLINC` (kotlinc gets its `JAVA_HOME` derived from the
+`TRANSPILE_JAVA` path, or set `TRANSPILE_JAVA_HOME`).
 
 ## Roadmap
 
@@ -204,11 +232,15 @@ tool's location with `TRANSPILE_PYTHON` / `TRANSPILE_ZIG` / `TRANSPILE_GO` / `TR
   while-fallback targets), the `?:` conditional, string `len`/`substr`/ordering, and
   truncating `int()`/`float()` casts — from **all five** source languages.
 - **Phase 10 ✅** — robustness: per-backend **reserved-word escaping**, a **property-based
-  fuzzer**, truncating `%` on Python/Lua, and a CI matrix that runs all nine toolchains on every
-  push.
-- **Next** — error messages with source locations; a browser playground; a Zig backend. The Lua
-  interpreter is built from source with `zig cc` so its backend is verified by running like the
-  rest.
+  fuzzer**, truncating `%` on Python/Lua, and a CI matrix that runs every toolchain on each push.
+- **Phase 11 ✅** — **compiler-grade errors** (`file:line:col`, source excerpt, caret), the
+  **browser playground**, the all-targets `showcase/` gallery, and a **Zig backend** (ten
+  targets): arena-backed `[]const u8` strings, `*Point` structs, `@divTrunc`/`@rem`,
+  `while (cond) : (post)` so `continue` runs the for-update natively, and const/var + discard
+  analysis (zig makes unused or unmutated locals compile errors).
+- **Next** — a Swift backend (needs the multi-GB Windows toolchain); Ruby/PHP/Dart as cheap
+  dynamic targets; `float[]` inference from untyped sources. The Lua interpreter is built from
+  source with `zig cc` so its backend is verified by running like the rest.
 
 ## License
 

@@ -167,7 +167,14 @@ function pyParse(src) {
     return { kind: "Block", stmts };
   }
 
-  function stmt() {
+  function stamp(t0, node) {
+    if (node && node.line == null && t0.line != null) { node.line = t0.line; node.col = t0.col; }
+    return node;
+  }
+  function stmt() { return stamp(cur(), stmtRaw()); }
+  function expr() { return stamp(cur(), exprRaw()); }
+
+  function stmtRaw() {
     if (at("kw", "pass")) { next(); expect("NEWLINE"); return null; }
     if (at("kw", "break")) { next(); expect("NEWLINE"); return { kind: "Break" }; }
     if (at("kw", "continue")) { next(); expect("NEWLINE"); return { kind: "Continue" }; }
@@ -261,7 +268,7 @@ function pyParse(src) {
   }
 
   // expressions; `a if c else b` (conditional expression) above or
-  function expr() {
+  function exprRaw() {
     const t = orExpr();
     if (at("kw", "if")) {
       next();

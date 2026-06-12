@@ -49,7 +49,7 @@ function main() {
       try { ref = norm(runTarget("js", source, dir, name + "_orig")); }
       catch (e) { ok(false, `${ex}: original JS failed: ${(e.stderr || e.message).toString().split("\n")[0]}`); continue; }
 
-      for (const t of ["python", "c", "go", "java", "csharp", "rust", "lua", "kotlin"]) {
+      for (const t of ["python", "c", "go", "java", "csharp", "rust", "lua", "kotlin", "zig"]) {
         try {
           const out = norm(runTarget(t, transpile(source, { from: "js", to: t }), dir, name + "_" + t));
           ok(out === ref, `${ex} (JS) -> ${t} matches the original JS`);
@@ -71,7 +71,7 @@ function main() {
       try { ref = norm(runTarget("python", source, dir, name + "_orig")); }
       catch (e) { ok(false, `${ex}: original Python failed: ${(e.stderr || e.message).toString().split("\n")[0]}`); continue; }
 
-      for (const t of ["js", "c", "go", "java", "csharp", "rust", "lua", "kotlin"]) {
+      for (const t of ["js", "c", "go", "java", "csharp", "rust", "lua", "kotlin", "zig"]) {
         try {
           const out = norm(runTarget(t, transpile(source, { from: "python", to: t }), dir, name + "_" + t));
           ok(out === ref, `${ex} (Python) -> ${t} matches the original Python`);
@@ -115,7 +115,7 @@ function main() {
       try { ref = norm(runTarget("c", source, dir, name + "_orig")); }
       catch (e) { ok(false, `${ex}: original C failed: ${(e.stderr || e.message).toString().split("\n")[0]}`); continue; }
 
-      for (const t of ["js", "python", "go", "java", "csharp", "rust", "lua", "kotlin"]) {
+      for (const t of ["js", "python", "go", "java", "csharp", "rust", "lua", "kotlin", "zig"]) {
         try {
           const out = norm(runTarget(t, transpile(source, { from: "c", to: t }), dir, name + "_" + t));
           ok(out === ref, `${ex} (C) -> ${t} matches the original C`);
@@ -175,6 +175,17 @@ function main() {
 
   const cgo = transpile('struct P { int x; };\nint main(void) { struct P p = {5}; printf("%d\\n", p.x); return 0; }', { from: "c", to: "go" });
   ok(cgo.includes("&P{x: 5}"), "c frontend: struct brace initializer becomes a Go struct literal");
+
+  // checker errors carry the source position of the offending statement/expression
+  let errLine = 0;
+  try { transpile("func main(): void {\n  let a: int = 1;\n  let b: int = a + true;\n}", { to: "js" }); }
+  catch (e) { errLine = e.line; }
+  ok(errLine === 3, "errors: MiniLang type errors carry the source line");
+
+  errLine = 0;
+  try { transpile("def main():\n    x = 1\n    y = x + undefined_thing\n\nmain()", { from: "python", to: "js" }); }
+  catch (e) { errLine = e.line; }
+  ok(errLine === 3, "errors: Python-source errors carry the source line");
 
   // string[] inference from untyped sources: param element types come from call sites
   const sjs = transpile(

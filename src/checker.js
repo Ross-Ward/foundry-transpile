@@ -80,7 +80,22 @@ function lookup(ctx, name) {
   return null;
 }
 
+// re-throw an unpositioned error with the nearest node's source location
+function located(err, node) {
+  if (err instanceof TranspileError && err.line == null && node && node.line != null)
+    return new TranspileError(err.raw, node.line, node.col);
+  return err;
+}
+
 function checkStmt(s, ctx) {
+  try {
+    checkStmtRaw(s, ctx);
+  } catch (err) {
+    throw located(err, s);
+  }
+}
+
+function checkStmtRaw(s, ctx) {
   switch (s.kind) {
     case "Let": {
       if (!validType(s.type, ctx.structs) || s.type === "void") throw new TranspileError(`bad type '${s.type}' for '${s.name}'`);
@@ -175,7 +190,11 @@ function requireBool(t, where) {
 
 // Returns the type of an expression and stores it on the node as `.type`.
 function infer(e, ctx) {
-  e.type = inferRaw(e, ctx);
+  try {
+    e.type = inferRaw(e, ctx);
+  } catch (err) {
+    throw located(err, e);
+  }
   return e.type;
 }
 

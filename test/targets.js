@@ -17,7 +17,7 @@ const TOOLS = {
   lua: process.env.TRANSPILE_LUA || "lua",
   kotlinc: process.env.TRANSPILE_KOTLINC || (isWin ? "kotlinc.bat" : "kotlinc"),
 };
-const TARGETS = ["js", "python", "c", "go", "java", "csharp", "rust", "lua", "kotlin"];
+const TARGETS = ["js", "python", "c", "go", "java", "csharp", "rust", "lua", "kotlin", "zig"];
 
 // kotlinc needs JAVA_HOME; derive it from the java override when it's a path
 const JAVA_HOME = process.env.TRANSPILE_JAVA_HOME ||
@@ -79,6 +79,10 @@ function runTarget(target, code, dir, name) {
       // .bat scripts need a shell on Windows
       cp.execFileSync(TOOLS.kotlinc, [f("kt"), "-nowarn", "-include-runtime", "-d", jar], { encoding: "utf8", env, shell: isWin });
       return cp.execFileSync(TOOLS.java, ["-jar", jar], { encoding: "utf8" });
+    }
+    case "zig": {
+      fs.writeFileSync(f("zig"), code);
+      return cp.execFileSync(TOOLS.zig, ["run", f("zig")], { encoding: "utf8" });
     }
     default: throw new Error("unknown target " + target);
   }
