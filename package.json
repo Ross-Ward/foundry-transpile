@@ -1,0 +1,13 @@
+{
+  "name": "foundry-transpile",
+  "version": "0.1.0",
+  "description": "A source-to-source transpiler built on a shared typed IR: many source languages in, many target languages out.",
+  "license": "MIT",
+  "author": "Ross Ward",
+  "type": "commonjs",
+  "main": "src/index.js",
+  "bin": { "transpile": "bin/transpile.js" },
+  "scripts": { "test": "node test/run.js" },
+  "files": ["src", "bin", "examples"],
+  "engines": { "node": ">=18" }
+}

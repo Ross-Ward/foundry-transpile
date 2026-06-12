@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96">
+  <rect width="96" height="96" rx="18" fill="#12121a"/>
+  <!-- one source node fanning out to four target nodes -->
+  <g stroke="#5fd3c0" stroke-width="2.4" fill="none">
+    <path d="M30 48 H50"/>
+    <path d="M50 48 C60 48 60 24 70 24"/>
+    <path d="M50 48 C60 48 60 40 70 40"/>
+    <path d="M50 48 C60 48 60 56 70 56"/>
+    <path d="M50 48 C60 48 60 72 70 72"/>
+  </g>
+  <circle cx="26" cy="48" r="7" fill="#5fd3c0"/>
+  <g fill="#cfd2e0" font-family="monospace" font-size="9">
+    <rect x="70" y="19" width="14" height="10" rx="2" fill="#f7df1e"/><text x="72" y="27" fill="#222">JS</text>
+    <rect x="70" y="35" width="14" height="10" rx="2" fill="#3776ab"/><text x="71.5" y="43">PY</text>
+    <rect x="70" y="51" width="14" height="10" rx="2" fill="#8fb6d6"/><text x="74" y="59" fill="#222">C</text>
+    <rect x="70" y="67" width="14" height="10" rx="2" fill="#62d0e0"/><text x="71.5" y="75" fill="#222">GO</text>
+  </g>
+</svg>
