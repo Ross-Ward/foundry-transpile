@@ -10,7 +10,7 @@
   <img alt="Node" src="https://img.shields.io/badge/node-%E2%89%A518-339933">
   <img alt="Sources" src="https://img.shields.io/badge/sources-MiniLang%20%C2%B7%20JS%20%C2%B7%20Python%20%C2%B7%20TS%20%C2%B7%20C-f7df1e">
   <img alt="Targets" src="https://img.shields.io/badge/targets-JS%20%C2%B7%20Py%20%C2%B7%20C%20%C2%B7%20Go%20%C2%B7%20Java%20%C2%B7%20C%23%20%C2%B7%20Rust%20%C2%B7%20Lua-654ff0">
-  <img alt="Tests" src="https://img.shields.io/badge/tests-207%2F207-success">
+  <img alt="Tests" src="https://img.shields.io/badge/tests-248%2F248-success">
 </p>
 
 ---
@@ -61,7 +61,12 @@ backends emit correct code for languages that disagree about fundamentals:
 - **structs** — declarations, positional construction (`Point(3, 4)`), field access/assignment, and
   mutation through a function, with **reference semantics on every target**: object literals in JS,
   classes in Python/Java/C#, tables in Lua, `*Point`/`&Point{…}` in Go, malloc'd pointers in C, and
-  owned values passed `&mut` in Rust (the checker rejects aliasing, so the models agree)
+  owned values passed `&mut` in Rust (the checker rejects aliasing, so the models agree). Usable
+  from **all five** source languages: JS/Python **classes** (field types inferred from constructor
+  call sites), TS **parameter-property classes** (`constructor(public x: int)`), and real **C
+  structs** (`struct Point *p` params, `&p` arguments, `->`/`.` access, brace initializers)
+- **booleans** — `print(flag)` and bool-in-concatenation say `true`/`false` on every target (Python
+  would say `True`, C `1`, C# `True`, and Lua's `..` refuses booleans outright — all normalized)
 - `&&`/`||` vs `and`/`or`, braces vs indentation, `==` vs `.equals` for Java strings (and `strcmp`
   in C), static type declarations for C/Go/Java/C#/Rust, and `let mut` for reassigned Rust bindings
 
@@ -153,9 +158,11 @@ with `TRANSPILE_PYTHON` / `TRANSPILE_ZIG` / `TRANSPILE_GO` / `TRANSPILE_JAVA` / 
   **`string[]`** across all 8 backends (with call-site element-type inference for untyped sources and
   a `StrSlice` + `strcmp` runtime in C), and **structs** across all 8 backends with reference
   semantics everywhere.
-- **Next** — structs in the real-language frontends; arrays of structs; more backends
-  (Kotlin/Swift). The Lua interpreter is built from source with `zig cc` so its backend is verified by
-  running like the rest.
+- **Phase 6 ✅** — structs in **all four real-language frontends** (JS/Python classes with inferred
+  field types, TS parameter properties, real C structs verified against `zig cc`), plus canonical
+  `true`/`false` printing on every target.
+- **Next** — arrays of structs; structs in structs; more backends (Kotlin/Swift). The Lua
+  interpreter is built from source with `zig cc` so its backend is verified by running like the rest.
 
 ## License
 

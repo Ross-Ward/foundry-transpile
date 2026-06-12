@@ -9,7 +9,7 @@
 const { TranspileError } = require("../lexer");
 
 const TYPE_MAP = { int: "int", float: "float", number: "int", bool: "bool", boolean: "bool", string: "string", void: "void" };
-const KEYWORDS = new Set(["function", "let", "const", "var", "return", "if", "else", "while", "for", "true", "false"]);
+const KEYWORDS = new Set(["function", "let", "const", "var", "return", "if", "else", "while", "for", "true", "false", "class", "new", "public"]);
 const OPS = [
   "===", "!==", "==", "!=", "<=", ">=", "+=", "-=", "*=", "/=", "&&", "||", "++", "--",
   "+", "-", "*", "/", "%", "=", "<", ">", "!", "(", ")", "{", "}", "[", "]", ",", ";", ":", ".",
@@ -66,9 +66,13 @@ function tsParse(src) {
     if (!at(kind, value)) { const c = cur(); throw new TranspileError(`expected ${value ?? kind} but found '${c.value ?? c.kind}'`, c.line, c.col); }
     return next();
   }
+  const structNames = new Set();
   function typeName() {
     const t = expect("id").value;
-    if (!(t in TYPE_MAP)) throw new TranspileError(`unknown type '${t}'`);
+    if (!(t in TYPE_MAP)) {
+      if (structNames.has(t)) return t; // class type (declared above its use)
+      throw new TranspileError(`unknown type '${t}'`);
+    }
     let ty = TYPE_MAP[t];
     while (isOp("[")) { next(); expect("op", "]"); ty += "[]"; } // array type: int[] / number[]
     return ty;
@@ -76,8 +80,35 @@ function tsParse(src) {
 
   function program() {
     const funcs = [];
-    while (!at("eof")) { if (at("kw", "function")) funcs.push(func()); else stmt(); }
-    return { kind: "Program", funcs };
+    const structs = [];
+    while (!at("eof")) {
+      if (at("kw", "function")) funcs.push(func());
+      else if (at("kw", "class")) structs.push(classDecl());
+      else stmt();
+    }
+    return { kind: "Program", funcs, structs };
+  }
+
+  // class Name { constructor(public x: int, public y: int) {} }  ->  Struct.
+  // TS parameter properties carry the field types directly — no inference.
+  function classDecl() {
+    expect("kw", "class");
+    const name = expect("id").value;
+    structNames.add(name);
+    expect("op", "{");
+    expect("id", "constructor");
+    expect("op", "(");
+    const fields = [];
+    if (!isOp(")")) do {
+      expect("kw", "public");
+      const fn = expect("id").value;
+      expect("op", ":");
+      fields.push({ name: fn, type: typeName() });
+    } while (eatOp(","));
+    expect("op", ")");
+    expect("op", "{"); expect("op", "}");
+    expect("op", "}");
+    return { kind: "Struct", name, fields };
   }
 
   function func() {
@@ -126,15 +157,19 @@ function tsParse(src) {
       next(); const rhs = expr();
       if (e.kind === "Var") node = { kind: "Assign", name: e.name, expr: rhs };
       else if (e.kind === "Index") node = { kind: "IndexAssign", arr: e.arr, idx: e.idx, expr: rhs };
+      else if (e.kind === "Field") node = { kind: "FieldAssign", obj: e.obj, name: e.name, expr: rhs };
       else throw new TranspileError("invalid assignment target");
     } else if (["+=", "-=", "*=", "/="].some((o) => isOp(o))) {
       const op = next().value, rhs = expr();
-      if (e.kind !== "Var") throw new TranspileError("invalid compound-assignment target");
-      node = { kind: "Assign", name: e.name, expr: { kind: "Bin", op: op[0], l: { kind: "Var", name: e.name }, r: rhs } };
+      if (e.kind === "Var") node = { kind: "Assign", name: e.name, expr: { kind: "Bin", op: op[0], l: { kind: "Var", name: e.name }, r: rhs } };
+      else if (e.kind === "Field") node = { kind: "FieldAssign", obj: e.obj, name: e.name, expr: { kind: "Bin", op: op[0], l: e, r: rhs } };
+      else throw new TranspileError("invalid compound-assignment target");
     } else if (isOp("++") || isOp("--")) {
       const op = next().value;
-      if (e.kind !== "Var") throw new TranspileError("invalid ++/-- target");
-      node = { kind: "Assign", name: e.name, expr: { kind: "Bin", op: op === "++" ? "+" : "-", l: { kind: "Var", name: e.name }, r: { kind: "Int", value: 1 } } };
+      const one = { kind: "Int", value: 1 };
+      if (e.kind === "Var") node = { kind: "Assign", name: e.name, expr: { kind: "Bin", op: op === "++" ? "+" : "-", l: { kind: "Var", name: e.name }, r: one } };
+      else if (e.kind === "Field") node = { kind: "FieldAssign", obj: e.obj, name: e.name, expr: { kind: "Bin", op: op === "++" ? "+" : "-", l: e, r: one } };
+      else throw new TranspileError("invalid ++/-- target");
     } else {
       node = { kind: "ExprStmt", expr: e };
     }
@@ -214,7 +249,10 @@ function tsParse(src) {
     let e = primaryBase();
     for (;;) {
       if (isOp("[")) { next(); const idx = expr(); expect("op", "]"); e = { kind: "Index", arr: e, idx }; }
-      else if (isOp(".")) { next(); const m = expect("id").value; if (m !== "length") throw new TranspileError(`only .length is supported, not .${m}`); e = { kind: "Len", arr: e }; }
+      else if (isOp(".")) {
+        next(); const m = expect("id").value;
+        e = m === "length" ? { kind: "Len", arr: e } : { kind: "Field", obj: e, name: m };
+      }
       else break;
     }
     return e;
@@ -226,6 +264,15 @@ function tsParse(src) {
     if (c.kind === "str") { next(); return { kind: "Str", value: c.value }; }
     if (at("kw", "true")) { next(); return { kind: "Bool", value: true }; }
     if (at("kw", "false")) { next(); return { kind: "Bool", value: false }; }
+    if (at("kw", "new")) { // new Name(args) -> constructor Call (checker -> StructLit)
+      next();
+      const name = expect("id").value;
+      expect("op", "(");
+      const args = [];
+      if (!isOp(")")) do { args.push(expr()); } while (eatOp(","));
+      expect("op", ")");
+      return { kind: "Call", name, args };
+    }
     if (isOp("(")) { next(); const e = expr(); expect("op", ")"); return e; }
     if (isOp("[")) { next(); const elems = []; if (!isOp("]")) do { elems.push(expr()); } while (eatOp(",")); expect("op", "]"); return { kind: "Array", elems }; }
     if (c.kind === "id") {
@@ -243,33 +290,42 @@ function tsParse(src) {
 // returns are always annotated in this subset).
 function fillLetTypes(program) {
   const funcs = new Map(program.funcs.map((f) => [f.name, f]));
+  const structs = new Map((program.structs || []).map((st) => [st.name, st]));
   for (const f of program.funcs) {
     const env = new Map();
     for (const p of f.params) env.set(p.name, p.type);
-    fillBlock(f.body, env, funcs);
+    fillBlock(f.body, env, funcs, structs);
   }
 }
-function fillBlock(block, env, funcs) {
+function fillBlock(block, env, funcs, structs) {
   for (const s of block.stmts) {
-    if (s.kind === "Let") { if (!s.type) s.type = typeOf(s.expr, env, funcs); env.set(s.name, s.type); }
-    else if (s.kind === "If") { fillBlock(s.then, new Map(env), funcs); if (s.els) fillBlock(s.els, new Map(env), funcs); }
-    else if (s.kind === "While") fillBlock(s.body, new Map(env), funcs);
-    else if (s.kind === "Block") fillBlock(s, new Map(env), funcs);
+    if (s.kind === "Let") { if (!s.type) s.type = typeOf(s.expr, env, funcs, structs); env.set(s.name, s.type); }
+    else if (s.kind === "If") { fillBlock(s.then, new Map(env), funcs, structs); if (s.els) fillBlock(s.els, new Map(env), funcs, structs); }
+    else if (s.kind === "While") fillBlock(s.body, new Map(env), funcs, structs);
+    else if (s.kind === "Block") fillBlock(s, new Map(env), funcs, structs);
   }
 }
-function typeOf(e, env, funcs) {
+function typeOf(e, env, funcs, structs) {
   switch (e.kind) {
     case "Int": return "int";
     case "Float": return "float";
     case "Str": return "string";
     case "Bool": return "bool";
     case "Var": return env.get(e.name) || "int";
-    case "Un": return e.op === "!" ? "bool" : typeOf(e.e, env, funcs);
-    case "Call": return (funcs.get(e.name) && funcs.get(e.name).ret) || "int";
+    case "Un": return e.op === "!" ? "bool" : typeOf(e.e, env, funcs, structs);
+    case "Call": {
+      if (structs.has(e.name)) return e.name; // constructor
+      return (funcs.get(e.name) && funcs.get(e.name).ret) || "int";
+    }
+    case "Field": {
+      const st = structs.get(typeOf(e.obj, env, funcs, structs));
+      const fl = st && st.fields.find((f) => f.name === e.name);
+      return fl ? fl.type : "int";
+    }
     case "Bin": {
       const op = e.op;
       if (["<", ">", "<=", ">=", "==", "!=", "&&", "||"].includes(op)) return "bool";
-      const lt = typeOf(e.l, env, funcs), rt = typeOf(e.r, env, funcs);
+      const lt = typeOf(e.l, env, funcs, structs), rt = typeOf(e.r, env, funcs, structs);
       if (op === "+" && (lt === "string" || rt === "string")) return "string";
       if (op === "%") return "int";
       return lt === "float" || rt === "float" ? "float" : "int";

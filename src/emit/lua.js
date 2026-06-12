@@ -80,7 +80,10 @@ function E(e) {
     case "Un": return e.op === "!" ? `(not ${E(e.e)})` : `(${e.op}${E(e.e)})`;
     case "Call": return `${e.name}(${e.args.map(E).join(", ")})`;
     case "Bin": {
-      if (e.op === "+" && e.type === "string") return `(${E(e.l)} .. ${E(e.r)})`; // Lua coerces numbers
+      if (e.op === "+" && e.type === "string") { // Lua coerces numbers in .. but errors on booleans
+        const s = (n) => (n.type === "bool" ? `(${E(n)} and "true" or "false")` : E(n));
+        return `(${s(e.l)} .. ${s(e.r)})`;
+      }
       if (e.op === "/" && e.type === "int") return `__idiv(${E(e.l)}, ${E(e.r)})`;
       return `(${E(e.l)} ${mapOp(e.op)} ${E(e.r)})`;
     }

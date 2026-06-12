@@ -12,7 +12,7 @@ const { TranspileError } = require("../lexer");
 const { inferTypes } = require("../infer");
 
 // ---- tokenizer -------------------------------------------------------------
-const KEYWORDS = new Set(["function", "let", "const", "var", "return", "if", "else", "while", "for", "true", "false"]);
+const KEYWORDS = new Set(["function", "let", "const", "var", "return", "if", "else", "while", "for", "true", "false", "class", "new", "this"]);
 const OPS = [
   "===", "!==", "==", "!=", "<=", ">=", "+=", "-=", "*=", "/=", "&&", "||", "++", "--",
   "+", "-", "*", "/", "%", "=", "<", ">", "!", "(", ")", "{", "}", "[", "]", ",", ";", ".",
@@ -81,12 +81,46 @@ function jsParse(src) {
 
   function program() {
     const funcs = [];
+    const structs = [];
     while (!at("eof")) {
       if (at("kw", "function")) funcs.push(func());
+      else if (at("kw", "class")) structs.push(classDecl());
       else stmt(); // discard top-level statements like `main();` — the IR's
                    // entry point is implicit and each backend re-emits the call
     }
-    return { kind: "Program", funcs };
+    return { kind: "Program", funcs, structs };
+  }
+
+  // class Name { constructor(a, b) { this.a = a; this.b = b; } }  ->  Struct.
+  // The IR constructs structs positionally, so the i-th field must be assigned
+  // straight from the i-th constructor parameter. Field types are inferred from
+  // `new Name(...)` call sites.
+  function classDecl() {
+    expect("kw", "class");
+    const name = expect("id").value;
+    expect("op", "{");
+    expect("id", "constructor");
+    expect("op", "(");
+    const params = [];
+    if (!isOp(")")) do { params.push(expect("id").value); } while (eatOp(","));
+    expect("op", ")");
+    expect("op", "{");
+    const fields = [];
+    while (!isOp("}")) {
+      expect("kw", "this"); expect("op", ".");
+      const fn = expect("id").value;
+      expect("op", "=");
+      const v = expect("id").value;
+      expect("op", ";");
+      if (v !== params[fields.length])
+        throw new TranspileError(`constructor of '${name}' must assign its parameters to fields in order (this.${fn} = ${params[fields.length] ?? "?"})`);
+      fields.push({ name: fn, type: null });
+    }
+    expect("op", "}");
+    expect("op", "}");
+    if (fields.length !== params.length)
+      throw new TranspileError(`constructor of '${name}' must assign every parameter to a field`);
+    return { kind: "Struct", name, fields };
   }
 
   function func() {
@@ -132,15 +166,19 @@ function jsParse(src) {
       next(); const rhs = expr();
       if (e.kind === "Var") node = { kind: "Assign", name: e.name, expr: rhs };
       else if (e.kind === "Index") node = { kind: "IndexAssign", arr: e.arr, idx: e.idx, expr: rhs };
+      else if (e.kind === "Field") node = { kind: "FieldAssign", obj: e.obj, name: e.name, expr: rhs };
       else throw new TranspileError("invalid assignment target");
     } else if (["+=", "-=", "*=", "/="].some((o) => isOp(o))) {
       const op = next().value, rhs = expr();
-      if (e.kind !== "Var") throw new TranspileError("invalid compound-assignment target");
-      node = { kind: "Assign", name: e.name, expr: { kind: "Bin", op: op[0], l: { kind: "Var", name: e.name }, r: rhs } };
+      if (e.kind === "Var") node = { kind: "Assign", name: e.name, expr: { kind: "Bin", op: op[0], l: { kind: "Var", name: e.name }, r: rhs } };
+      else if (e.kind === "Field") node = { kind: "FieldAssign", obj: e.obj, name: e.name, expr: { kind: "Bin", op: op[0], l: e, r: rhs } };
+      else throw new TranspileError("invalid compound-assignment target");
     } else if (isOp("++") || isOp("--")) {
       const op = next().value;
-      if (e.kind !== "Var") throw new TranspileError("invalid ++/-- target");
-      node = { kind: "Assign", name: e.name, expr: { kind: "Bin", op: op === "++" ? "+" : "-", l: { kind: "Var", name: e.name }, r: { kind: "Int", value: 1 } } };
+      const one = { kind: "Int", value: 1 };
+      if (e.kind === "Var") node = { kind: "Assign", name: e.name, expr: { kind: "Bin", op: op === "++" ? "+" : "-", l: { kind: "Var", name: e.name }, r: one } };
+      else if (e.kind === "Field") node = { kind: "FieldAssign", obj: e.obj, name: e.name, expr: { kind: "Bin", op: op === "++" ? "+" : "-", l: e, r: one } };
+      else throw new TranspileError("invalid ++/-- target");
     } else {
       node = { kind: "ExprStmt", expr: e };
     }
@@ -221,12 +259,15 @@ function jsParse(src) {
     return primary();
   }
 
-  // primary with postfix:  a[i]  and  a.length
+  // primary with postfix:  a[i],  a.length (array length),  p.field
   function primary() {
     let e = primaryBase();
     for (;;) {
       if (isOp("[")) { next(); const idx = expr(); expect("op", "]"); e = { kind: "Index", arr: e, idx }; }
-      else if (isOp(".")) { next(); const m = expect("id").value; if (m !== "length") throw new TranspileError(`only .length is supported, not .${m}`); e = { kind: "Len", arr: e }; }
+      else if (isOp(".")) {
+        next(); const m = expect("id").value;
+        e = m === "length" ? { kind: "Len", arr: e } : { kind: "Field", obj: e, name: m };
+      }
       else break;
     }
     return e;
@@ -239,6 +280,15 @@ function jsParse(src) {
     if (c.kind === "str") { next(); return { kind: "Str", value: c.value }; }
     if (at("kw", "true")) { next(); return { kind: "Bool", value: true }; }
     if (at("kw", "false")) { next(); return { kind: "Bool", value: false }; }
+    if (at("kw", "new")) { // new Name(args) -> constructor Call (checker -> StructLit)
+      next();
+      const name = expect("id").value;
+      expect("op", "(");
+      const args = [];
+      if (!isOp(")")) do { args.push(expr()); } while (eatOp(","));
+      expect("op", ")");
+      return { kind: "Call", name, args };
+    }
     if (isOp("(")) { next(); const e = expr(); expect("op", ")"); return e; }
     if (isOp("[")) { // array literal
       next(); const elems = [];

@@ -41,7 +41,11 @@ function emitStmt(s, d) {
   switch (s.kind) {
     case "Let": return `${pad}${T(s.type)} ${s.name} = ${E(s.expr)};`;
     case "Assign": return `${pad}${s.name} = ${E(s.expr)};`;
-    case "Print": return `${pad}Console.WriteLine(${s.expr.type === "float" ? `__f(${E(s.expr)})` : E(s.expr)});`;
+    case "Print": {
+      if (s.expr.type === "float") return `${pad}Console.WriteLine(__f(${E(s.expr)}));`;
+      if (s.expr.type === "bool") return `${pad}Console.WriteLine(${E(s.expr)} ? "true" : "false");`; // WriteLine(bool) says "True"
+      return `${pad}Console.WriteLine(${E(s.expr)});`;
+    }
     case "IndexAssign": return `${pad}${E(s.arr)}[${E(s.idx)}] = ${E(s.expr)};`;
     case "FieldAssign": return `${pad}${E(s.obj)}.${s.name} = ${E(s.expr)};`;
     case "Return": return `${pad}return${s.expr ? " " + E(s.expr) : ""};`;
@@ -66,7 +70,13 @@ function E(e) {
     case "Var": return e.name;
     case "Un": return `(${e.op}${E(e.e)})`;
     case "Call": return `${e.name}(${e.args.map(E).join(", ")})`;
-    case "Bin": return `(${E(e.l)} ${e.op} ${E(e.r)})`;
+    case "Bin": {
+      if (e.op === "+" && e.type === "string") { // bool + string would say "True"
+        const s = (n) => (n.type === "bool" ? `(${E(n)} ? "true" : "false")` : E(n));
+        return `(${s(e.l)} + ${s(e.r)})`;
+      }
+      return `(${E(e.l)} ${e.op} ${E(e.r)})`;
+    }
     case "Array": return `new ${CS[e.type.slice(0, -2)]}[]{${e.elems.map(E).join(", ")}}`;
     case "NewArray": return `new ${CS[e.type.slice(0, -2)]}[${E(e.size)}]`;
     case "Index": return `${E(e.arr)}[${E(e.idx)}]`;

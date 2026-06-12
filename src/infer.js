@@ -13,8 +13,14 @@
 
 const NUMERIC = new Set(["int", "float"]);
 
+// struct declarations of the program being inferred (name -> Struct node).
+// Untyped sources declare fields with type null; constructor call sites and
+// field assignments fill them in during the fixpoint.
+let STRUCTS = new Map();
+
 function inferTypes(program) {
   const funcs = new Map(program.funcs.map((f) => [f.name, f]));
+  STRUCTS = new Map((program.structs || []).map((st) => [st.name, st]));
 
   // 1. parameter types from usage
   for (const f of program.funcs)
@@ -36,6 +42,7 @@ function inferTypes(program) {
     for (const p of f.params) if (!p.type) p.type = "int";
     if (!f.ret) f.ret = "void";
   }
+  for (const st of STRUCTS.values()) for (const fl of st.fields) if (!fl.type) fl.type = "int";
   // final local pass with everything settled
   for (const f of program.funcs) {
     const env = new Map();
@@ -86,10 +93,30 @@ function inferStmt(s, env, funcs, retTypes, finalize) {
 // element type comes from call sites — a `string[]` argument upgrades the
 // callee's `int[]` guess. Runs inside the fixpoint so it propagates.
 function refineCallArgs(s, env, funcs) {
-  for (const root of [s.expr, s.cond, s.arr, s.idx]) {
+  // a field assignment types the field from the value assigned to it
+  if (s.kind === "FieldAssign") {
+    const st = STRUCTS.get(typeOf(s.obj, env, funcs));
+    if (st) {
+      const fl = st.fields.find((f) => f.name === s.name);
+      const t = typeOf(s.expr, env, funcs);
+      if (fl && !fl.type && t) fl.type = t;
+    }
+  }
+  for (const root of [s.expr, s.cond, s.arr, s.idx, s.obj]) {
     if (!root) continue;
     walkExprs(root, (e) => {
       if (e.kind !== "Call") return;
+      // a constructor call types the struct's fields from its arguments
+      const st = STRUCTS.get(e.name);
+      if (st) {
+        e.args.forEach((a, i) => {
+          const fl = st.fields[i];
+          if (!fl || fl.type) return;
+          const at = typeOf(a, env, funcs);
+          if (at) fl.type = at;
+        });
+        return;
+      }
       const f = funcs.get(e.name);
       if (!f) return;
       e.args.forEach((a, i) => {
@@ -97,9 +124,9 @@ function refineCallArgs(s, env, funcs) {
         if (!p) return;
         const at = typeOf(a, env, funcs);
         if (at && at.endsWith("[]") && (p.type == null || p.type.endsWith("[]"))) p.type = at;
-        // a string argument is stronger evidence than a usage-based int guess
-        // (e.g. `x + tag` looks numeric until a call site passes a string)
-        else if (at === "string" && (p.type == null || p.type === "int")) p.type = "string";
+        // a string or struct argument is stronger evidence than a usage-based
+        // int guess (e.g. `x + tag` looks numeric until a call site disagrees)
+        else if (at && (at === "string" || STRUCTS.has(at)) && (p.type == null || p.type === "int")) p.type = at;
       });
     });
   }
@@ -114,7 +141,16 @@ function typeOf(e, env, funcs) {
     case "Bool": return "bool";
     case "Var": return env.get(e.name) ?? null;
     case "Un": return e.op === "!" ? "bool" : (typeOf(e.e, env, funcs) || "int");
-    case "Call": return (funcs.get(e.name) && funcs.get(e.name).ret) || null;
+    case "Call": {
+      if (STRUCTS.has(e.name)) return e.name; // constructor — the checker rewrites it
+      return (funcs.get(e.name) && funcs.get(e.name).ret) || null;
+    }
+    case "Field": {
+      const st = STRUCTS.get(typeOf(e.obj, env, funcs));
+      if (!st) return null;
+      const fl = st.fields.find((f) => f.name === e.name);
+      return fl ? fl.type : null;
+    }
     case "Bin": {
       const op = e.op;
       if (["<", ">", "<=", ">=", "==", "!=", "&&", "||"].includes(op)) return "bool";
@@ -168,7 +204,7 @@ function scanParam(name, body) {
 
 function walkExprs(node, fn) {
   if (!node || typeof node !== "object") return;
-  if (node.kind && /^(Int|Float|Str|Bool|Var|Un|Bin|Call|Index|Len|Array|NewArray)$/.test(node.kind)) fn(node);
+  if (node.kind && /^(Int|Float|Str|Bool|Var|Un|Bin|Call|Index|Len|Array|NewArray|Field)$/.test(node.kind)) fn(node);
   for (const k of Object.keys(node)) {
     const v = node[k];
     if (Array.isArray(v)) v.forEach((x) => walkExprs(x, fn));

@@ -12,7 +12,7 @@
 const { TranspileError } = require("../lexer");
 const { inferTypes } = require("../infer");
 
-const KEYWORDS = new Set(["def", "return", "if", "elif", "else", "while", "for", "in", "and", "or", "not", "True", "False", "pass"]);
+const KEYWORDS = new Set(["def", "return", "if", "elif", "else", "while", "for", "in", "and", "or", "not", "True", "False", "pass", "class"]);
 const OPS = ["==", "!=", "<=", ">=", "//", "+=", "-=", "*=", "+", "-", "*", "/", "%", "=", "<", ">", "(", ")", "[", "]", ",", ":", "."];
 
 // ---- tokenizer with INDENT / DEDENT / NEWLINE ------------------------------
@@ -94,11 +94,51 @@ function pyParse(src) {
 
   function program() {
     const funcs = [];
+    const structs = [];
     while (!at("eof")) {
       if (at("kw", "def")) funcs.push(def());
+      else if (at("kw", "class")) structs.push(classDecl());
       else { stmt(); } // discard top-level statements like `main()`
     }
-    return { kind: "Program", funcs };
+    return { kind: "Program", funcs, structs };
+  }
+
+  // class Name:                       -> Struct. Positional IR construction
+  //     def __init__(self, a, b):        means the i-th field must be assigned
+  //         self.a = a                    straight from the i-th parameter;
+  //         self.b = b                    field types come from call sites.
+  function classDecl() {
+    expect("kw", "class");
+    const name = expect("id").value;
+    expect("op", ":");
+    expect("NEWLINE"); expect("INDENT");
+    expect("kw", "def");
+    const ctor = expect("id").value;
+    if (ctor !== "__init__") throw new TranspileError(`class '${name}' may only define __init__, not '${ctor}'`);
+    expect("op", "(");
+    const self = expect("id").value;
+    if (self !== "self") throw new TranspileError(`__init__ of '${name}' must take self first`);
+    const params = [];
+    while (eatOp(",")) params.push(expect("id").value);
+    expect("op", ")"); expect("op", ":");
+    expect("NEWLINE"); expect("INDENT");
+    const fields = [];
+    while (!at("DEDENT")) {
+      const s = expect("id").value;
+      if (s !== "self") throw new TranspileError(`__init__ of '${name}' may only contain self.field = param lines`);
+      expect("op", ".");
+      const fn = expect("id").value;
+      expect("op", "=");
+      const v = expect("id").value;
+      expect("NEWLINE");
+      if (v !== params[fields.length])
+        throw new TranspileError(`__init__ of '${name}' must assign its parameters to fields in order (self.${fn} = ${params[fields.length] ?? "?"})`);
+      fields.push({ name: fn, type: null });
+    }
+    expect("DEDENT"); expect("DEDENT");
+    if (fields.length !== params.length)
+      throw new TranspileError(`__init__ of '${name}' must assign every parameter to a field`);
+    return { kind: "Struct", name, fields };
   }
 
   function def() {
@@ -147,12 +187,14 @@ function pyParse(src) {
         return { kind: "Let", name: e.name, type: null, expr: rhs };
       }
       if (e.kind === "Index") return { kind: "IndexAssign", arr: e.arr, idx: e.idx, expr: rhs };
+      if (e.kind === "Field") return { kind: "FieldAssign", obj: e.obj, name: e.name, expr: rhs };
       throw new TranspileError("invalid assignment target");
     }
     if (["+=", "-=", "*="].some((o) => isOp(o))) {
       const op = next().value, rhs = expr(); expect("NEWLINE");
-      if (e.kind !== "Var") throw new TranspileError("invalid compound-assignment target");
-      return { kind: "Assign", name: e.name, expr: { kind: "Bin", op: op[0], l: { kind: "Var", name: e.name }, r: rhs } };
+      if (e.kind === "Var") return { kind: "Assign", name: e.name, expr: { kind: "Bin", op: op[0], l: { kind: "Var", name: e.name }, r: rhs } };
+      if (e.kind === "Field") return { kind: "FieldAssign", obj: e.obj, name: e.name, expr: { kind: "Bin", op: op[0], l: e, r: rhs } };
+      throw new TranspileError("invalid compound-assignment target");
     }
     expect("NEWLINE");
     return { kind: "ExprStmt", expr: e };
@@ -246,7 +288,11 @@ function pyParse(src) {
 
   function primary() {
     let e = primaryBase();
-    while (isOp("[")) { next(); const idx = expr(); expect("op", "]"); e = { kind: "Index", arr: e, idx }; }
+    while (isOp("[") || isOp(".")) {
+      if (eatOp(".")) { e = { kind: "Field", obj: e, name: expect("id").value }; continue; }
+      next(); const idx = expr(); expect("op", "]");
+      e = { kind: "Index", arr: e, idx };
+    }
     return e;
   }
   function primaryBase() {

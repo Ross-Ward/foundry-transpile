@@ -159,7 +159,8 @@ function emitStmt(s, d) {
 
 function printf(e) {
   if (e.type === "float") return `printf("%s\\n", __fmt(${E(e)}));`; // canonical float text
-  const fmt = { int: "%d", bool: "%d", string: "%s" }[e.type];
+  if (e.type === "bool") return `printf("%s\\n", ${E(e)} ? "true" : "false");`; // %d would say 1/0
+  const fmt = { int: "%d", string: "%s" }[e.type];
   return `printf("${fmt}\\n", ${E(e)});`;
 }
 

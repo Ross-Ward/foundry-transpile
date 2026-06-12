@@ -220,6 +220,18 @@ function main() {
   try { transpile(PT + "func main(): void { let a: P = P(\"hi\"); }", { to: "js" }); } catch { threw = true; }
   ok(threw, "checker: rejects a wrongly-typed struct field value");
 
+  threw = false;
+  try {
+    transpile("class P { constructor(a, b) { this.x = b; this.y = a; } }\nfunction main() { let p = new P(1, 2); console.log(p.x); }\nmain();", { from: "js", to: "js" });
+  } catch { threw = true; }
+  ok(threw, "js frontend: rejects out-of-order constructor field assignment");
+
+  const tscs = transpile("class V { constructor(public x: int) {} }\nfunction main(): void { let v = new V(7); console.log(v.x); }\nmain();", { from: "ts", to: "csharp" });
+  ok(tscs.includes("class V"), "ts frontend: parameter-property classes become C# classes");
+
+  const cgo = transpile('struct P { int x; };\nint main(void) { struct P p = {5}; printf("%d\\n", p.x); return 0; }', { from: "c", to: "go" });
+  ok(cgo.includes("&P{x: 5}"), "c frontend: struct brace initializer becomes a Go struct literal");
+
   // string[] inference from untyped sources: param element types come from call sites
   const sjs = transpile(
     "function first(xs) { return xs[0]; }\nfunction main() { let xs = [\"a\", \"b\"]; console.log(first(xs)); }\nmain();",

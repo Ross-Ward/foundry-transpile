@@ -11,10 +11,10 @@
 // and the `sizeof(a) / sizeof(a[0])` length idiom (-> Len).
 const { TranspileError } = require("../lexer");
 
-const KEYWORDS = new Set(["int", "double", "bool", "char", "void", "const", "if", "else", "while", "for", "return", "true", "false"]);
+const KEYWORDS = new Set(["int", "double", "bool", "char", "void", "const", "if", "else", "while", "for", "return", "true", "false", "struct"]);
 const OPS = [
-  "==", "!=", "<=", ">=", "+=", "-=", "*=", "/=", "&&", "||", "++", "--",
-  "+", "-", "*", "/", "%", "=", "<", ">", "!", "(", ")", "{", "}", "[", "]", ",", ";",
+  "==", "!=", "<=", ">=", "+=", "-=", "*=", "/=", "&&", "||", "++", "--", "->",
+  "+", "-", "*", "/", "%", "=", "<", ">", "!", "&", "(", ")", "{", "}", "[", "]", ",", ";", ".",
 ];
 
 function tokenize(src) {
@@ -72,9 +72,17 @@ function cParse(src) {
     return next();
   }
 
-  function isTypeStart() { return at("kw", "int") || at("kw", "double") || at("kw", "bool") || at("kw", "char") || at("kw", "void") || at("kw", "const"); }
+  const structNames = new Set();
+  function isTypeStart() { return at("kw", "int") || at("kw", "double") || at("kw", "bool") || at("kw", "char") || at("kw", "void") || at("kw", "const") || at("kw", "struct"); }
   function parseType() {
     if (at("kw", "const")) next();
+    if (at("kw", "struct")) { // struct Name (value) / struct Name * (the reference) — same IR type
+      next();
+      const sn = expect("id").value;
+      if (!structNames.has(sn)) throw new TranspileError(`unknown struct '${sn}'`);
+      eatOp("*");
+      return sn;
+    }
     const base = expect("kw").value;
     if (base === "char") { expect("op", "*"); return "string"; }
     let t;
@@ -93,8 +101,31 @@ function cParse(src) {
 
   function program() {
     const funcs = [];
-    while (!at("eof")) funcs.push(func());
-    return { kind: "Program", funcs };
+    const structs = [];
+    while (!at("eof")) {
+      // `struct Name {` is a declaration; `struct Name` elsewhere is a type use
+      if (at("kw", "struct") && toks[p + 2] && toks[p + 2].kind === "op" && toks[p + 2].value === "{") structs.push(structDecl());
+      else funcs.push(func());
+    }
+    return { kind: "Program", funcs, structs };
+  }
+
+  // struct Point { int x; int y; };
+  function structDecl() {
+    expect("kw", "struct");
+    const name = expect("id").value;
+    structNames.add(name); // visible to its own fields' parse and everything after
+    expect("op", "{");
+    const fields = [];
+    while (!isOp("}")) {
+      const ft = parseType();
+      const fn = expect("id").value;
+      expect("op", ";");
+      fields.push({ name: fn, type: ft });
+    }
+    expect("op", "}");
+    expect("op", ";");
+    return { kind: "Struct", name, fields };
   }
 
   function func() {
@@ -147,6 +178,14 @@ function cParse(src) {
     const t = parseType();
     const name = expect("id").value;
     if (isOp("[")) return arrayDecl(t, name);
+    if (structNames.has(t)) { // struct Point p = {3, 4};
+      expect("op", "=");
+      expect("op", "{");
+      const args = [];
+      if (!isOp("}")) do { args.push(expr()); } while (eatOp(","));
+      expect("op", "}");
+      return { kind: "Let", name, type: t, expr: { kind: "Call", name: t, args } }; // checker -> StructLit
+    }
     let e;
     if (eatOp("=")) e = expr();
     else e = defaultValue(t);
@@ -185,15 +224,16 @@ function cParse(src) {
       return node;
     }
     const e = expr();
-    // `a[i] = …` / `a[i] += …` / `a[i]++` — the index parsed as an expression
-    if (e.kind === "Index" && cur().kind === "op" && ["=", "+=", "-=", "*=", "/=", "++", "--"].includes(cur().value)) {
+    // `a[i] = …` / `p->x += …` / `v.y++` — the lvalue parsed as an expression
+    if ((e.kind === "Index" || e.kind === "Field") && cur().kind === "op" && ["=", "+=", "-=", "*=", "/=", "++", "--"].includes(cur().value)) {
       const op = next().value;
       let rhs;
       if (op === "++" || op === "--") rhs = { kind: "Bin", op: op === "++" ? "+" : "-", l: e, r: { kind: "Int", value: 1 } };
       else if (op === "=") rhs = expr();
       else rhs = { kind: "Bin", op: op[0], l: e, r: expr() };
       if (semi) expect("op", ";");
-      return { kind: "IndexAssign", arr: e.arr, idx: e.idx, expr: rhs };
+      if (e.kind === "Index") return { kind: "IndexAssign", arr: e.arr, idx: e.idx, expr: rhs };
+      return { kind: "FieldAssign", obj: e.obj, name: e.name, expr: rhs };
     }
     if (semi) expect("op", ";");
     return { kind: "ExprStmt", expr: e };
@@ -297,6 +337,7 @@ function cParse(src) {
   const orExpr = binLevel(and, ["||"]);
   function unary() {
     if (isOp("-") || isOp("!")) { const op = next().value; return { kind: "Un", op, e: unary() }; }
+    if (isOp("&")) { next(); return unary(); } // &v — address-of is identity in the IR's reference model
     return primary();
   }
   function primary() {
@@ -321,7 +362,11 @@ function cParse(src) {
       let node;
       if (isOp("(")) { next(); const args = []; if (!isOp(")")) do { args.push(expr()); } while (eatOp(",")); expect("op", ")"); node = { kind: "Call", name: c.value, args }; }
       else node = { kind: "Var", name: c.value };
-      while (isOp("[")) { next(); const idx = expr(); expect("op", "]"); node = { kind: "Index", arr: node, idx }; }
+      for (;;) {
+        if (isOp("[")) { next(); const idx = expr(); expect("op", "]"); node = { kind: "Index", arr: node, idx }; continue; }
+        if (isOp(".") || isOp("->")) { next(); node = { kind: "Field", obj: node, name: expect("id").value }; continue; } // v.x and p->x are the same Field
+        break;
+      }
       return node;
     }
     throw new TranspileError(`unexpected '${c.value ?? c.kind}'`, c.line, c.col);

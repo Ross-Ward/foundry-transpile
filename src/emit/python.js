@@ -38,7 +38,11 @@ function emitStmt(s, d) {
   switch (s.kind) {
     case "Let": return `${pad}${s.name} = ${E(s.expr)}`;
     case "Assign": return `${pad}${s.name} = ${E(s.expr)}`;
-    case "Print": return `${pad}print(${s.expr.type === "float" ? `__f(${E(s.expr)})` : E(s.expr)})`;
+    case "Print": {
+      if (s.expr.type === "float") return `${pad}print(__f(${E(s.expr)}))`;
+      if (s.expr.type === "bool") return `${pad}print("true" if ${E(s.expr)} else "false")`; // canonical bool text
+      return `${pad}print(${E(s.expr)})`;
+    }
     case "IndexAssign": return `${pad}${E(s.arr)}[${E(s.idx)}] = ${E(s.expr)}`;
     case "FieldAssign": return `${pad}${E(s.obj)}.${s.name} = ${E(s.expr)}`;
     case "Return": return `${pad}return${s.expr ? " " + E(s.expr) : ""}`;
@@ -76,7 +80,9 @@ function E(e) {
     case "Bin": {
       // string concatenation: convert non-string operands with str()
       if (e.op === "+" && e.type === "string") {
-        const s = (n) => (n.type === "string" ? E(n) : `str(${E(n)})`);
+        const s = (n) => (n.type === "string" ? E(n)
+          : n.type === "bool" ? `("true" if ${E(n)} else "false")` // str(True) would say "True"
+          : `str(${E(n)})`);
         return `(${s(e.l)} + ${s(e.r)})`;
       }
       const l = E(e.l), r = E(e.r);
