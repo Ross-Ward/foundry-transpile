@@ -21,6 +21,8 @@ const { emitRust } = require("./emit/rust");
 const { emitLua } = require("./emit/lua");
 const { emitKotlin } = require("./emit/kotlin");
 const { emitZig } = require("./emit/zig");
+const { emitPHP } = require("./emit/php");
+const { emitDart } = require("./emit/dart");
 
 // frontends: source language -> IR
 const FRONTENDS = {
@@ -43,9 +45,11 @@ const BACKENDS = {
   lua: emitLua,
   kotlin: emitKotlin,
   zig: emitZig,
+  php: emitPHP,
+  dart: emitDart,
 };
 
-const FILE_EXT = { js: "js", python: "py", c: "c", go: "go", java: "java", csharp: "cs", rust: "rs", lua: "lua", kotlin: "kt", zig: "zig" };
+const FILE_EXT = { js: "js", python: "py", c: "c", go: "go", java: "java", csharp: "cs", rust: "rs", lua: "lua", kotlin: "kt", zig: "zig", php: "php", dart: "dart" };
 
 /**
  * Transpile `source` from one language to another.

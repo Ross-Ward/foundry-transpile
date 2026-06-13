@@ -19,6 +19,10 @@ jobs:
         with: { distribution: temurin, java-version: '21' }
       - uses: actions/setup-dotnet@v4
         with: { dotnet-version: '9.0.x' }
+      - uses: shivammathur/setup-php@v2
+        with: { php-version: '8.4' }
+      - uses: dart-lang/setup-dart@v1
+        with: { sdk: stable }
       - name: Install Lua 5.4
         run: sudo apt-get update && sudo apt-get install -y lua5.4
       - name: Install Kotlin compiler
@@ -28,7 +32,7 @@ jobs:
           echo "$HOME/kotlinc/bin" >> "$GITHUB_PATH"
       - name: Rust + Python are preinstalled on the runner
         run: rustc --version && python3 --version
-      - name: Transpile to all 9 targets, run each, assert identical output
+      - name: Transpile to all 12 targets, run each, assert identical output
         run: TRANSPILE_PYTHON=python3 TRANSPILE_LUA=lua5.4 node test/run.js
-      - name: Fuzz (15 random programs across all 9 targets)
+      - name: Fuzz (15 random programs across all 12 targets)
         run: TRANSPILE_PYTHON=python3 TRANSPILE_LUA=lua5.4 node test/fuzz.js 1 15

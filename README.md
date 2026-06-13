@@ -9,8 +9,8 @@
   <img alt="Dependencies" src="https://img.shields.io/badge/dependencies-0-brightgreen">
   <img alt="Node" src="https://img.shields.io/badge/node-%E2%89%A518-339933">
   <img alt="Sources" src="https://img.shields.io/badge/sources-MiniLang%20%C2%B7%20JS%20%C2%B7%20Python%20%C2%B7%20TS%20%C2%B7%20C-f7df1e">
-  <img alt="Targets" src="https://img.shields.io/badge/targets-JS%20%C2%B7%20Py%20%C2%B7%20C%20%C2%B7%20Go%20%C2%B7%20Java%20%C2%B7%20C%23%20%C2%B7%20Rust%20%C2%B7%20Lua%20%C2%B7%20Kotlin%20%C2%B7%20Zig-654ff0">
-  <img alt="Tests" src="https://img.shields.io/badge/tests-463%2F463-success">
+  <img alt="Targets" src="https://img.shields.io/badge/targets-12%20languages-654ff0">
+  <img alt="Tests" src="https://img.shields.io/badge/tests-575%2F575-success">
 </p>
 
 ---
@@ -23,10 +23,11 @@ Part of the **Foundry Tools** engines. The architecture is the point:
    JavaScript ─┤                                           ├─ C · Go
    Python ─────┤─▶ (infer)  (annotates every node)         ├─ Java · C#
    TypeScript ─┤                                           ├─ Rust · Lua
-   C ──────────┘                                           └─ Kotlin · Zig
+   C ──────────┘                                           ├─ Kotlin · Zig
+                                                           └─ PHP · Dart
 ```
 
-**5 source languages × 10 target languages.** MiniLang/TypeScript/C carry explicit types; the JS and
+**5 source languages × 12 target languages.** MiniLang/TypeScript/C carry explicit types; the JS and
 Python frontends infer them. The C frontend even maps `printf` format strings into concatenations and
 turns `int main()` into the IR's void entry.
 
@@ -194,10 +195,11 @@ npm test          # node test/run.js
 
 To *run* the generated programs the harness needs `node`, `python`, `zig` (0.16 — both the C
 compiler and the Zig target), `go`, `java` (JDK 11+, single-file launch), `rustc`, `dotnet`,
-`lua` (5.4), and `kotlinc`. Override any tool's location with `TRANSPILE_PYTHON` /
-`TRANSPILE_ZIG` / `TRANSPILE_GO` / `TRANSPILE_JAVA` / `TRANSPILE_RUST` / `TRANSPILE_DOTNET` /
-`TRANSPILE_LUA` / `TRANSPILE_KOTLINC` (kotlinc gets its `JAVA_HOME` derived from the
-`TRANSPILE_JAVA` path, or set `TRANSPILE_JAVA_HOME`).
+`lua` (5.4), `kotlinc`, `php` (8+), and `dart`. Override any tool's location with
+`TRANSPILE_PYTHON` / `TRANSPILE_ZIG` / `TRANSPILE_GO` / `TRANSPILE_JAVA` / `TRANSPILE_RUST` /
+`TRANSPILE_DOTNET` / `TRANSPILE_LUA` / `TRANSPILE_KOTLINC` / `TRANSPILE_PHP` / `TRANSPILE_DART`
+(kotlinc gets its `JAVA_HOME` derived from the `TRANSPILE_JAVA` path, or set
+`TRANSPILE_JAVA_HOME`).
 
 ## Roadmap
 
@@ -238,9 +240,14 @@ compiler and the Zig target), `go`, `java` (JDK 11+, single-file launch), `rustc
   targets): arena-backed `[]const u8` strings, `*Point` structs, `@divTrunc`/`@rem`,
   `while (cond) : (post)` so `continue` runs the for-update natively, and const/var + discard
   analysis (zig makes unused or unmutated locals compile errors).
-- **Next** — a Swift backend (needs the multi-GB Windows toolchain); Ruby/PHP/Dart as cheap
-  dynamic targets; `float[]` inference from untyped sources. The Lua interpreter is built from
-  source with `zig cc` so its backend is verified by running like the rest.
+- **Phase 12 ✅** — **PHP and Dart backends** (twelve targets): PHP gets by-reference array
+  params (PHP arrays are copy-on-pass), `intdiv`, `===` to dodge type juggling, and `strcmp`
+  ordering (PHP's `<` compares numeric-looking strings numerically); Dart gets `~/`, a
+  truncating-`%` helper (Dart's `%` is euclidean), `compareTo` ordering, and `this.x`
+  constructors. Plus `float[]` examples from untyped JS/Python sources and npm-ready packaging.
+- **Next** — a Swift backend (needs the multi-GB Windows toolchain); Ruby (its portable Windows
+  build is 7z-only). The Lua interpreter is built from source with `zig cc` so its backend is
+  verified by running like the rest.
 
 ## License
 

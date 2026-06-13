@@ -231,10 +231,8 @@ function E(e) {
     case "Len": return `@as(i64, @intCast(${E(e.arr)}.len))`;
     case "StructLit": return `__new_${e.name}(${e.args.map(E).join(", ")})`;
     case "Field": return `${E(e.obj)}.${e.name}`;
-    case "Cond": {
-      const t = e.type === "string" ? `@as([]const u8, ${E(e.t)})` : E(e.t);
-      return `(if (${E(e.c)}) ${t} else ${E(e.f)})`;
-    }
+    case "Cond": // @as pins the branch type — two literal branches would peer-resolve
+      return `(if (${E(e.c)}) @as(${T(e.type)}, ${E(e.t)}) else ${E(e.f)})`; // to comptime_int, illegal at runtime
     case "Substr": return `${E(e.s)}[@intCast(${E(e.start)})..@intCast(${E(e.end)})]`;
     case "Cast":
       if (e.to === "int") return e.e.type === "float" ? `@as(i64, @intFromFloat(@trunc(${E(e.e)})))` : `(${E(e.e)})`;

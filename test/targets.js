@@ -16,8 +16,10 @@ const TOOLS = {
   dotnet: process.env.TRANSPILE_DOTNET || "dotnet",
   lua: process.env.TRANSPILE_LUA || "lua",
   kotlinc: process.env.TRANSPILE_KOTLINC || (isWin ? "kotlinc.bat" : "kotlinc"),
+  php: process.env.TRANSPILE_PHP || "php",
+  dart: process.env.TRANSPILE_DART || "dart",
 };
-const TARGETS = ["js", "python", "c", "go", "java", "csharp", "rust", "lua", "kotlin", "zig"];
+const TARGETS = ["js", "python", "c", "go", "java", "csharp", "rust", "lua", "kotlin", "zig", "php", "dart"];
 
 // kotlinc needs JAVA_HOME; derive it from the java override when it's a path
 const JAVA_HOME = process.env.TRANSPILE_JAVA_HOME ||
@@ -83,6 +85,14 @@ function runTarget(target, code, dir, name) {
     case "zig": {
       fs.writeFileSync(f("zig"), code);
       return cp.execFileSync(TOOLS.zig, ["run", f("zig")], { encoding: "utf8" });
+    }
+    case "php": {
+      fs.writeFileSync(f("php"), code);
+      return cp.execFileSync(TOOLS.php, [f("php")], { encoding: "utf8" });
+    }
+    case "dart": {
+      fs.writeFileSync(f("dart"), code);
+      return cp.execFileSync(TOOLS.dart, ["run", f("dart")], { encoding: "utf8", shell: isWin }); // dart.bat on Windows
     }
     default: throw new Error("unknown target " + target);
   }

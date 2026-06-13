@@ -1,13 +1,17 @@
 {
   "name": "foundry-transpile",
-  "version": "0.1.0",
-  "description": "A source-to-source transpiler built on a shared typed IR: many source languages in, many target languages out.",
+  "version": "1.0.0",
+  "description": "A source-to-source transpiler built on a shared typed IR: 5 source languages in (MiniLang, JavaScript, Python, TypeScript, C), 12 target languages out (JS, Python, C, Go, Java, C#, Rust, Lua, Kotlin, Zig, PHP, Dart), every path output-verified by running the generated code.",
+  "keywords": ["transpiler", "compiler", "source-to-source", "code-generation", "typed-ir", "type-inference", "zero-dependencies"],
   "license": "MIT",
   "author": "Ross Ward",
+  "repository": { "type": "git", "url": "git+https://github.com/Ross-Ward/foundry-transpile.git" },
+  "homepage": "https://github.com/Ross-Ward/foundry-transpile#readme",
   "type": "commonjs",
   "main": "src/index.js",
+  "exports": { ".": "./src/index.js" },
   "bin": { "transpile": "bin/transpile.js" },
-  "scripts": { "test": "node test/run.js", "fuzz": "node test/fuzz.js" },
+  "scripts": { "test": "node test/run.js", "fuzz": "node test/fuzz.js", "showcase": "node tools/gen-showcase.js", "playground": "node playground/build.js" },
   "files": ["src", "bin", "examples"],
   "engines": { "node": ">=18" }
 }
